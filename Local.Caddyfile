@@ -1,0 +1,8 @@
+{
+  auto_https off
+  admin off
+}
+:8080 {
+  handle_path /remote/* { reverse_proxy app:6080 }
+  handle { reverse_proxy app:3000 }
+}

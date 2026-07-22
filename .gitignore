@@ -1,0 +1,10 @@
+node_modules/
+.env
+storage/*
+!storage/.gitkeep
+tmp/*
+!tmp/.gitkeep
+runtime/
+*.log
+*.zip
+.DS_Store

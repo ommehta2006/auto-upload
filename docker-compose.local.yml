@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: youtubepilot
+      POSTGRES_USER: youtubepilot
+      POSTGRES_PASSWORD: local-development-password-change-me
+    volumes: [local_postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U youtubepilot -d youtubepilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://youtubepilot:local-development-password-change-me@db:5432/youtubepilot
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY}
+      SIGNUP_INVITE_CODE: ${SIGNUP_INVITE_CODE}
+      BASE_URL: http://localhost:8080
+      NOVNC_PUBLIC_URL: http://localhost:8080/remote/vnc.html
+      COOKIE_SECURE: "false"
+      TRUST_PROXY: "true"
+      BROWSER_HEADLESS: "true"
+      MAX_VIDEO_MB: ${MAX_VIDEO_MB:-1000}
+      MAX_STORAGE_MB_PER_USER: ${MAX_STORAGE_MB_PER_USER:-4096}
+      DISPLAY: :99
+    shm_size: 1gb
+    volumes: [local_storage:/app/storage,local_tmp:/app/tmp]
+    expose: ["3000","6080"]
+  proxy:
+    image: caddy:2.11.3-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["8080:8080"]
+    volumes: [./Local.Caddyfile:/etc/caddy/Caddyfile:ro]
+volumes: { local_postgres: {}, local_storage: {}, local_tmp: {} }

@@ -1,0 +1,16 @@
+{
+  auto_https off
+  admin off
+}
+
+:{$PUBLIC_PORT} {
+  encode zstd gzip
+
+  handle_path /remote/* {
+    reverse_proxy 127.0.0.1:6080
+  }
+
+  handle {
+    reverse_proxy 127.0.0.1:3001
+  }
+}
