@@ -64,17 +64,21 @@ async function claimNextUpload() {
        WHERE u.enabled=TRUE AND u.status='READY' AND u.automation_start_at<=NOW() AND s.automation_enabled=TRUE
        ORDER BY u.automation_start_at ASC LIMIT 25 FOR UPDATE OF u SKIP LOCKED`
     );
+    if (candidates.rowCount) console.log(`Worker found ${candidates.rowCount} due READY upload candidate${candidates.rowCount === 1 ? '' : 's'}.`);
     for (const candidate of candidates.rows) {
       if (!candidate.media_id || !candidate.media_path) {
         await client.query(`UPDATE uploads SET status='FILE_MISSING',error='The source video is missing.',updated_at=NOW() WHERE id=$1`,[candidate.id]);
+        console.log(`Worker marked ${candidate.upload_id} as FILE_MISSING.`);
         continue;
       }
       if (!candidate.encrypted_state || candidate.account_status !== 'CONNECTED') {
         await client.query(`UPDATE uploads SET status='LOGIN_REQUIRED',error='Connect YouTube before this upload can run.',updated_at=NOW() WHERE id=$1`,[candidate.id]);
+        console.log(`Worker marked ${candidate.upload_id} as LOGIN_REQUIRED because the YouTube account is not connected.`);
         continue;
       }
       if (candidate.attempts >= candidate.max_attempts) {
         await client.query(`UPDATE uploads SET status='FAILED',error='Maximum upload attempts reached.',updated_at=NOW() WHERE id=$1`,[candidate.id]);
+        console.log(`Worker marked ${candidate.upload_id} as FAILED after max attempts.`);
         continue;
       }
       if (!(await candidateAllowed(client,candidate))) continue;
@@ -82,7 +86,10 @@ async function claimNextUpload() {
         `UPDATE uploads SET status='UPLOADING',attempts=attempts+1,last_attempt_at=NOW(),error='',warnings='[]'::jsonb,updated_at=NOW()
          WHERE id=$1 AND status='READY' RETURNING *`, [candidate.id]
       );
-      if (claimed.rowCount) return { ...candidate, ...claimed.rows[0] };
+      if (claimed.rowCount) {
+        console.log(`Worker claimed ${candidate.upload_id} for upload.`);
+        return { ...candidate, ...claimed.rows[0] };
+      }
     }
     return null;
   });
@@ -147,6 +154,7 @@ async function workerTick() {
 export function startWorker() {
   if (loopTimer) return;
   stopping = false;
+  console.log(`Worker started with interval ${config.workerIntervalMs}ms and concurrency ${config.workerConcurrency}.`);
   const run = async () => {
     try { await workerTick(); } catch (error) { console.error('Worker tick failed:',error); }
     if (!stopping) loopTimer = setTimeout(run,config.workerIntervalMs);

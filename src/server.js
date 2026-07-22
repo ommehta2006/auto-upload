@@ -42,7 +42,7 @@ await query(`UPDATE youtube_accounts
              WHERE status='CONNECTING'`);
 
 const app = express();
-if (config.trustProxy) app.set('trust proxy', true);
+if (config.trustProxy) app.set('trust proxy', 1);
 app.set('view engine', 'ejs');
 app.set('views', path.join(config.rootDir, 'views'));
 app.disable('x-powered-by');
