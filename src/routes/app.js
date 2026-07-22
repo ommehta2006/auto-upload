@@ -315,6 +315,18 @@ router.post('/app/uploads/:id/edit',async (req,res,next) => {
 
 router.post('/app/uploads/:id/retry',async (req,res,next) => {
   try {
+    const current = await query(
+      `SELECT u.status,a.status AS account_status
+         FROM uploads u
+         LEFT JOIN youtube_accounts a ON a.user_id=u.user_id
+        WHERE u.id=$1 AND u.user_id=$2`,
+      [req.params.id,req.session.userId]
+    );
+    if (!current.rowCount) throw new Error('The upload could not be retried.');
+    if (current.rows[0].status === 'ACCOUNT_ACTION_REQUIRED' && current.rows[0].account_status !== 'CONNECTED') {
+      flash(req,'error','Complete YouTube Studio verification and save the channel connection before retrying this upload.');
+      return res.redirect('/app#channel');
+    }
     const result = await query(`UPDATE uploads SET status='READY',error='',enabled=TRUE,attempts=0,last_attempt_at=NULL,warnings='[]'::jsonb,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status<>'UPLOADED' RETURNING upload_id`,[req.params.id,req.session.userId]);
     if (!result.rowCount) throw new Error('The upload could not be retried. Completed uploads are immutable.');
     flash(req,'success','Upload moved back to READY.'); res.redirect('/app#queue');
