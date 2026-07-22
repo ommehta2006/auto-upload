@@ -33,6 +33,13 @@
   text-decoration: none;
 }
 
+.pilot-auth-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
 .pilot-ambient,
 .pilot-intro {
   position: absolute;
@@ -460,6 +467,75 @@
   backdrop-filter: blur(12px);
   cursor: pointer;
   font-size: 12px;
+}
+
+@media (max-width: 1280px) {
+  .pilot-shell {
+    grid-template-columns: minmax(0, 1fr) minmax(390px, 0.82fr);
+    gap: 3.5vw;
+    padding: 86px 4vw 50px;
+  }
+
+  .pilot-hero h1 {
+    max-width: 650px;
+    font-size: clamp(48px, 5.3vw, 76px);
+  }
+
+  .pilot-lead {
+    max-width: 590px;
+    font-size: 16px;
+    line-height: 1.62;
+  }
+
+  .pilot-login {
+    width: min(100%, 470px);
+    padding: 32px;
+  }
+
+  .pilot-field input,
+  .pilot-primary {
+    height: 51px;
+    min-height: 51px;
+  }
+}
+
+@media (max-height: 780px) and (min-width: 981px) {
+  .pilot-shell {
+    min-height: 720px;
+    padding-top: 76px;
+    padding-bottom: 44px;
+  }
+
+  .pilot-hero h1 {
+    margin: 18px 0 14px;
+    font-size: clamp(46px, 5vw, 70px);
+  }
+
+  .pilot-lead {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .pilot-value-grid {
+    margin-top: 22px;
+  }
+
+  .pilot-value {
+    padding: 14px 15px;
+  }
+
+  .pilot-login {
+    padding: 28px;
+  }
+
+  .pilot-form {
+    gap: 13px;
+    margin-top: 20px;
+  }
+
+  .pilot-login h2 {
+    font-size: 28px;
+  }
 }
 
 @media (max-width: 980px) {

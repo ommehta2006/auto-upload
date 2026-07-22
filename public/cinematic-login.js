@@ -1,26 +1,25 @@
 (() => {
-  const root = document.querySelector('[data-cinematic-login]');
+  const root = document.querySelector('[data-cinematic-login], [data-cinematic-intro]');
   if (!root) return;
 
   const intro = root.querySelector('[data-intro-canvas]');
   const ambient = root.querySelector('[data-ambient-canvas]');
   const introCopy = root.querySelector('[data-intro-copy]');
   const controls = root.querySelector('[data-intro-controls]');
-  const soundButton = root.querySelector('[data-sound-toggle]');
-  const skipButton = root.querySelector('[data-skip-intro]');
   const replayButton = root.querySelector('[data-replay-intro]');
+  const shouldAutoplayIntro = root.dataset.introAutoplay === 'true';
   const ictx = intro?.getContext('2d');
-  const actx = ambient?.getContext('2d');
+  const actx = ambient?.getContext('2d') || null;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if (!intro || !ambient || !ictx || !actx) return;
+  if (!intro || !ictx) return;
 
   let width = 0;
   let height = 0;
   let dpr = 1;
   let startedAt = performance.now();
-  let finished = false;
-  let soundOn = false;
+  let finished = !shouldAutoplayIntro;
+  let soundOn = true;
   let audioContext;
   let stars = [];
   let dust = [];
@@ -31,7 +30,7 @@
     width = Math.max(1, innerWidth);
     height = Math.max(1, innerHeight);
 
-    [intro, ambient].forEach(canvas => {
+    [intro, ambient].filter(Boolean).forEach(canvas => {
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       canvas.style.width = `${width}px`;
@@ -39,7 +38,7 @@
     });
 
     ictx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    actx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    actx?.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     stars = Array.from({ length: Math.min(360, Math.floor(width * height / 3200)) }, () => ({
       angle: Math.random() * Math.PI * 2,
@@ -147,7 +146,11 @@
 
   function playSound() {
     if (!soundOn) return;
-    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    } catch {
+      return;
+    }
 
     const now = audioContext.currentTime;
     const oscillator = audioContext.createOscillator();
@@ -164,11 +167,15 @@
     gain.gain.exponentialRampToValueAtTime(0.055, now + 0.3);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.6);
 
-    oscillator.connect(filter);
-    filter.connect(gain);
-    gain.connect(audioContext.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 2.7);
+    try {
+      oscillator.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 2.7);
+    } catch {
+      // Some browsers block automatic audio until a user gesture.
+    }
   }
 
   function finishIntro() {
@@ -185,6 +192,8 @@
     }
     finished = false;
     intro.classList.remove('is-hidden');
+    if (introCopy) introCopy.hidden = false;
+    if (controls) controls.hidden = false;
     if (controls) controls.style.display = 'flex';
     startedAt = performance.now();
     playSound();
@@ -283,6 +292,7 @@
   }
 
   function drawAmbient(now) {
+    if (!actx) return;
     actx.clearRect(0, 0, width, height);
     const seconds = now / 1000;
     background.forEach((star, index) => {
@@ -297,18 +307,9 @@
 
   window.addEventListener('resize', resize);
   resize();
-  requestAnimationFrame(drawAmbient);
+  if (actx) requestAnimationFrame(drawAmbient);
 
-  skipButton?.addEventListener('click', finishIntro);
   replayButton?.addEventListener('click', startIntro);
-  soundButton?.addEventListener('click', () => {
-    soundOn = !soundOn;
-    soundButton.textContent = soundOn ? 'Sound on' : 'Sound off';
-    if (soundOn) {
-      audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
-      playSound();
-    }
-  });
 
   root.querySelectorAll('[data-password-toggle]').forEach(button => {
     button.addEventListener('click', () => {
@@ -329,5 +330,9 @@
     });
   });
 
-  startIntro();
+  if (shouldAutoplayIntro) {
+    startIntro();
+  } else {
+    finishIntro();
+  }
 })();
