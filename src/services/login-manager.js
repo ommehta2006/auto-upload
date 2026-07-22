@@ -9,6 +9,7 @@ import { decryptJson, encryptJson, randomToken } from './crypto.js';
 import { addLog } from './logs.js';
 
 let activeSession = null;
+const SECURITY_CHALLENGE_PATTERN = /verify it'?s you|verify it’s you|confirm your identity|suspicious activity|to continue, we need to confirm|check your phone|enter the code|two-step verification|couldn'?t sign you in/i;
 
 function waitForPort(host, port, timeoutMs = 9000) {
   const started = Date.now();
@@ -130,11 +131,47 @@ async function startSigninBrowser(existingState) {
 }
 
 async function studioLooksAuthenticated(page) {
+  if (await studioHasSecurityChallenge(page)) return false;
   const url = page.url().toLowerCase();
   if (url.includes('accounts.google.com') || url.includes('servicelogin')) return false;
   const signIn = await page.getByText(/sign in/i, { exact: true }).first().isVisible().catch(() => false);
   if (signIn) return false;
   return page.locator('#avatar-btn, ytcp-button#create-icon, #create-icon, ytcp-channel-name, #channel-name').first().isVisible({ timeout: 5000 }).catch(() => false);
+}
+
+async function studioHasSecurityChallenge(page) {
+  const body = await page.locator('body').innerText({ timeout: 1500 }).catch(() => '');
+  return SECURITY_CHALLENGE_PATTERN.test(body);
+}
+
+async function dismissConnectionInterstitials(page) {
+  const skipStudio = page.getByText(/^skip to youtube studio$/i).first();
+  if (await skipStudio.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await skipStudio.click({ timeout: 2000 }).catch(() => {});
+    await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
+  }
+  const labels = [/^got it$/i,/^not now$/i,/^no thanks$/i,/^dismiss$/i,/^close$/i];
+  for (const label of labels) {
+    const button = page.getByRole('button', { name: label }).first();
+    if (await button.isVisible({ timeout: 500 }).catch(() => false)) await button.click({ timeout: 1500 }).catch(() => {});
+  }
+}
+
+async function assertStudioReadyForAutomation(userId, page) {
+  await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
+  const started = Date.now();
+  while (Date.now() - started < 45_000) {
+    await dismissConnectionInterstitials(page);
+    if (await studioHasSecurityChallenge(page)) {
+      const message = 'Google is still showing "Verify it is you" inside YouTube Studio. Complete that security step in the remote browser before saving the connection.';
+      await query(`UPDATE youtube_accounts SET status='ATTENTION_REQUIRED',last_error=$2,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[userId,message]).catch(() => {});
+      await addLog(userId,'warning','YouTube Studio verification is still pending during connection.',{ reason:'google_security_challenge' });
+      throw new Error(message);
+    }
+    if (await studioLooksAuthenticated(page)) return;
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  throw new Error('A completed YouTube Studio login was not detected. Finish Google verification until the Studio dashboard appears.');
 }
 
 export async function startYouTubeLogin(userId) {
@@ -180,7 +217,7 @@ export async function startYouTubeLogin(userId) {
 export async function completeYouTubeLogin(userId) {
   if (!activeSession || activeSession.userId !== userId) throw new Error('No active YouTube connection window was found for this account.');
   const { page, context } = activeSession;
-  if (!(await studioLooksAuthenticated(page))) throw new Error('A completed YouTube Studio login was not detected. Finish Google verification until the Studio dashboard appears.');
+  await assertStudioReadyForAutomation(userId,page);
   const state = await context.storageState({ indexedDB:true }).catch(() => context.storageState());
   const hasGoogleSession = state.cookies?.some(cookie => ['SID','SAPISID','__Secure-3PSID','LOGIN_INFO'].includes(cookie.name));
   if (!hasGoogleSession) throw new Error('The Google/YouTube session cookie was not detected. Complete login before saving the connection.');
