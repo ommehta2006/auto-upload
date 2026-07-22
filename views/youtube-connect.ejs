@@ -14,7 +14,7 @@
           <li>Complete any Google login, OTP, CAPTCHA, channel selection, or verification prompt shown there.</li>
           <li>Return here and save the encrypted browser session whenever you are ready.</li>
         </ol>
-        <div class="warning-box">Saving stores the current remote browser session exactly as it is. The connection window expires at <strong><%= new Date(session.expiresAt).toLocaleTimeString() %></strong>.</div>
+        <div class="warning-box">Saving stores the current remote browser session exactly as it is and automatically resumes uploads blocked by login or verification. The connection window expires at <strong><%= new Date(session.expiresAt).toLocaleTimeString() %></strong>.</div>
       </div>
       <div class="connect-actions">
         <a class="btn btn-primary btn-xl" href="<%= session.remoteUrl %>" target="_blank" rel="noopener">Open remote YouTube Studio</a>

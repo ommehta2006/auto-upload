@@ -250,7 +250,20 @@ export async function completeYouTubeLogin(userId) {
     `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,channel_name=$3,connected_at=NOW(),last_checked_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
     [userId,encrypted,channelName]
   );
-  await addLog(userId,'success','YouTube browser session saved securely.',{ channelName,currentUrl:page.url() });
+  const resumed = await query(
+    `UPDATE uploads
+        SET status='READY',enabled=TRUE,error='',attempts=0,last_attempt_at=NULL,updated_at=NOW()
+      WHERE user_id=$1
+        AND status IN ('LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED')
+        AND youtube_url=''
+      RETURNING upload_id`,
+    [userId]
+  );
+  await addLog(userId,'success','YouTube browser session saved securely.',{
+    channelName,
+    currentUrl:page.url(),
+    resumedUploads:resumed.rows.map(row => row.upload_id)
+  });
   await closeActive('completed');
 }
 
