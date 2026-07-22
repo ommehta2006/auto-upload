@@ -87,6 +87,17 @@ function remoteUrl(accessToken) {
   return url.toString();
 }
 
+function remoteEntryUrl() {
+  return `${config.baseUrl}/app/youtube/remote`;
+}
+
+function writeRemoteToken(session, accessToken) {
+  fs.writeFileSync(session.tokenFile, `${accessToken}: ${config.vncHost}:${config.vncPort}\n`, { mode: 0o600 });
+  session.accessToken = accessToken;
+  session.remoteUrl = remoteUrl(accessToken);
+  session.remoteUrlIssuedAt = new Date();
+}
+
 async function startSigninBrowser({ userId, channelId, existingState, timezone }) {
   const profileDir = await ensureChannelProfile(userId, channelId);
   const { context } = await launchYouTubePersistentContext({
@@ -187,7 +198,7 @@ async function assertStudioReadyForAutomation(userId, page) {
 
 export async function startYouTubeLogin(userId) {
   if (activeSession) {
-    if (activeSession.userId === userId) return { remoteUrl: activeSession.remoteUrl, expiresAt: activeSession.expiresAt, alreadyActive: true };
+    if (activeSession.userId === userId) return { remoteUrl: remoteEntryUrl(), expiresAt: activeSession.expiresAt, alreadyActive: true };
     throw new Error('Another YouTube connection is currently in progress. Try again after it finishes.');
   }
   const accountResult = await query(
@@ -217,7 +228,7 @@ export async function startYouTubeLogin(userId) {
     timeout.unref();
     activeSession = { userId, accountId:account.id, channelId, browserLock, context, page, profileDir:signin.profileDir, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
     await addLog(userId,'info','YouTube connection window opened.',{ channelId, expiresAt, event:'verification_session_started' });
-    return { remoteUrl:url, expiresAt, alreadyActive:false };
+    return { remoteUrl:remoteEntryUrl(), expiresAt, alreadyActive:false };
   } catch (error) {
     await context?.close().catch(() => {});
     await browserLock?.release().catch(() => {});
@@ -232,6 +243,13 @@ export async function startYouTubeLogin(userId) {
 export async function restartYouTubeLogin(userId) {
   if (activeSession?.userId === userId) await closeActive('restarted');
   return startYouTubeLogin(userId);
+}
+
+export function issueRemoteBrowserUrl(userId) {
+  if (!activeSession || activeSession.userId !== userId) throw new Error('No active YouTube connection window was found for this account.');
+  const accessToken = randomToken(18);
+  writeRemoteToken(activeSession, accessToken);
+  return { remoteUrl:activeSession.remoteUrl, expiresAt:activeSession.expiresAt };
 }
 
 export async function completeYouTubeLogin(userId) {
@@ -291,7 +309,7 @@ export async function disconnectYouTube(userId) {
 
 export function loginSessionStatus(userId) {
   if (!activeSession || activeSession.userId !== userId) return { active:false };
-  return { active:true, expiresAt:activeSession.expiresAt, remoteUrl:activeSession.remoteUrl };
+  return { active:true, expiresAt:activeSession.expiresAt, remoteUrl:remoteEntryUrl() };
 }
 
 export async function shutdownLoginManager() { await closeActive('server shutdown'); }

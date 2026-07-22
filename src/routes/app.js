@@ -15,7 +15,7 @@ import { saveUploadedFile, removeStoredFile, absoluteStoragePath, safeName } fro
 import { probeVideo, validateContentType } from '../services/media-probe.js';
 import { parseUploadsWorkbook, buildUploadsWorkbook } from '../services/excel.js';
 import { addLog } from '../services/logs.js';
-import { startYouTubeLogin, restartYouTubeLogin, completeYouTubeLogin, cancelYouTubeLogin, disconnectYouTube, loginSessionStatus } from '../services/login-manager.js';
+import { startYouTubeLogin, restartYouTubeLogin, completeYouTubeLogin, cancelYouTubeLogin, disconnectYouTube, loginSessionStatus, issueRemoteBrowserUrl } from '../services/login-manager.js';
 import { checkYouTubeSession } from '../services/session-health.js';
 import { assessDuplicateRisk } from '../services/duplicate-risk.js';
 
@@ -432,7 +432,9 @@ router.post('/app/youtube/connect',async (req,res,next) => { try { await startYo
 router.get('/app/youtube/connect',async (req,res,next) => { try { const session=loginSessionStatus(req.session.userId); if (!session.active) { flash(req,'error','The YouTube connection window is not active.'); return res.redirect('/app#channel'); } res.render('youtube-connect',{ title:'Connect YouTube',session }); } catch (error) { next(error); } });
 router.get('/app/youtube/remote',async (req,res,next) => {
   try {
-    const session = req.query.restart === '1' ? await restartYouTubeLogin(req.session.userId) : await startYouTubeLogin(req.session.userId);
+    if (req.query.restart === '1') await restartYouTubeLogin(req.session.userId);
+    else await startYouTubeLogin(req.session.userId);
+    const session = issueRemoteBrowserUrl(req.session.userId);
     res.redirect(session.remoteUrl);
   } catch (error) { next(error); }
 });
