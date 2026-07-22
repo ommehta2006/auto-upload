@@ -15,6 +15,8 @@ export class YouTubeAutomationError extends Error {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const YOUTUBE_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
+const ACCOUNT_VERIFICATION_PATTERN = /verify it'?s you|verify it’s you|suspicious activity|confirm your identity|to continue, we need to confirm|check your phone|enter the code|two-step verification/i;
+const ACCOUNT_VERIFICATION_WAIT_MS = 10 * 60_000;
 
 async function visible(locator, timeout = 1200) {
   return locator?.first().isVisible({ timeout }).catch(() => false);
@@ -95,14 +97,42 @@ async function dismissObstructions(page, log = () => {}) {
   return dismissed;
 }
 
-async function assertLoggedIn(page) {
+async function hasAccountVerification(page) {
+  const body = await page.locator('body').innerText().catch(() => '');
+  return ACCOUNT_VERIFICATION_PATTERN.test(body);
+}
+
+async function waitForManualAccountApproval(page, log = () => {}) {
+  if (!(await hasAccountVerification(page))) return false;
+  await clickCandidates([
+    page.locator('[role="dialog"]').getByRole('button', { name:/^next$/i }),
+    page.getByRole('button', { name:/^next$/i }),
+    page.getByText(/^next$/i)
+  ], 5000);
+  log('warning', 'Google account verification is waiting for manual approval. The worker will wait up to 10 minutes.');
+  const started = Date.now();
+  while (Date.now() - started < ACCOUNT_VERIFICATION_WAIT_MS) {
+    if (!(await hasAccountVerification(page))) {
+      log('info', 'Google account verification cleared; continuing upload.');
+      await sleep(2500);
+      return true;
+    }
+    await sleep(5000);
+  }
+  throw new YouTubeAutomationError('Google account verification was not approved within 10 minutes.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
+}
+
+async function assertLoggedIn(page, log = () => {}) {
   const url = page.url().toLowerCase();
   const body = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
   if (url.includes('accounts.google.com') || url.includes('servicelogin') || /sign in to continue to youtube/i.test(body)) {
     throw new YouTubeAutomationError('YouTube login is required. Reconnect the channel.', 'LOGIN_REQUIRED', { retryable:false });
   }
-  if (/verify it'?s you|suspicious activity|confirm your identity|couldn'?t sign you in/i.test(body)) {
-    throw new YouTubeAutomationError('Google is requesting account verification. Reconnect the channel and complete the challenge.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
+  if (/couldn'?t sign you in/i.test(body)) {
+    throw new YouTubeAutomationError('Google could not sign in with this browser session. Reconnect the channel and complete Google login.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
+  }
+  if (ACCOUNT_VERIFICATION_PATTERN.test(body)) {
+    await waitForManualAccountApproval(page, log);
   }
 }
 
@@ -110,7 +140,7 @@ async function waitForStudioReady(page, log = () => {}) {
   const started = Date.now();
   while (Date.now() - started < 45_000) {
     await dismissObstructions(page, log);
-    await assertLoggedIn(page);
+    await assertLoggedIn(page, log);
     const createVisible = await visible(page.locator('#create-icon'), 600)
       || await visible(page.getByRole('button', { name:/create/i }), 600)
       || await visible(page.getByText(/^create$/i), 600)
@@ -154,10 +184,10 @@ async function chooseVideoFile(page, videoPath) {
   throw new YouTubeAutomationError('The YouTube video file picker could not be controlled.');
 }
 
-async function waitForDetails(page) {
+async function waitForDetails(page, log = () => {}) {
   const started = Date.now();
   while (Date.now() - started < 90_000) {
-    await assertLoggedIn(page);
+    await assertLoggedIn(page, log);
     const ready = await visible(page.locator('#title-textarea #textbox'), 700)
       || await visible(page.getByText(/^details$/i), 700)
       || await visible(page.getByText(/is this video made for kids/i), 700);
@@ -422,12 +452,12 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     popupTimer = setInterval(() => void dismissObstructions(page,log).catch(() => {}),2000);
     popupTimer.unref();
     await page.goto(config.youtubeStudioUrl,{ waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
-    await assertLoggedIn(page);
+    await assertLoggedIn(page, log);
     await dismissObstructions(page,log);
     await waitForStudioReady(page,log);
     await openUploadDialog(page);
     await chooseVideoFile(page,videoPath);
-    await waitForDetails(page);
+    await waitForDetails(page,log);
     await setTextBox(page,'title',post.title,true);
     await setTextBox(page,'description',post.description,false);
     if (thumbnailPath && !(await setThumbnail(page,thumbnailPath))) warnings.push('Custom thumbnail control was not available; YouTube will use an automatic thumbnail.');
