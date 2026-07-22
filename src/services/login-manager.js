@@ -180,12 +180,27 @@ async function dismissConnectionInterstitials(page) {
   }
 }
 
+async function recoverStudioOops(page) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const body = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
+    if (!/oops,\s*something went wrong/i.test(body)) return;
+    const retry = page.getByRole('button', { name:/^retry$/i }).first();
+    if (await retry.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await retry.click({ timeout: 2000 }).catch(() => {});
+    } else {
+      await page.reload({ waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
+
 async function assertStudioReadyForAutomation(userId, page) {
   if (!page.url().toLowerCase().includes('studio.youtube.com')) {
     await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
   }
   const started = Date.now();
   while (Date.now() - started < 45_000) {
+    await recoverStudioOops(page);
     await dismissConnectionInterstitials(page);
     if (await studioHasSecurityChallenge(page)) {
       const message = 'Google is still showing "Verify it is you" inside YouTube Studio. Complete that security step in the remote browser before saving the connection.';
@@ -219,6 +234,7 @@ export async function startYouTubeLogin(userId) {
     ({ browser, context } = signin);
     const { page } = signin;
     await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
+    await recoverStudioOops(page);
     const expiresAt = new Date(Date.now() + config.loginSessionMinutes * 60_000);
     const url = remoteUrl(accessToken);
     const timeout = setTimeout(async () => {
@@ -238,6 +254,11 @@ export async function startYouTubeLogin(userId) {
     await query(`UPDATE youtube_accounts SET status='ERROR',last_error=$2,updated_at=NOW() WHERE user_id=$1`,[userId,error.message]).catch(() => {});
     throw error;
   }
+}
+
+export async function restartYouTubeLogin(userId) {
+  if (activeSession?.userId === userId) await closeActive('restarted');
+  return startYouTubeLogin(userId);
 }
 
 export async function completeYouTubeLogin(userId) {
