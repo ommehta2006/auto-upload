@@ -10,6 +10,7 @@ import { addLog } from './logs.js';
 
 let activeSession = null;
 const SECURITY_CHALLENGE_PATTERN = /verify it'?s you|verify it’s you|confirm your identity|suspicious activity|to continue, we need to confirm|check your phone|enter the code|two-step verification|couldn'?t sign you in/i;
+const STUDIO_DASHBOARD_PATTERN = /channel dashboard|your channel|dashboard\s+content\s+analytics|upload videos|customi[sz]ation|audio library|channel analytics/i;
 
 function waitForPort(host, port, timeoutMs = 9000) {
   const started = Date.now();
@@ -136,12 +137,34 @@ async function studioLooksAuthenticated(page) {
   if (url.includes('accounts.google.com') || url.includes('servicelogin')) return false;
   const signIn = await page.getByText(/sign in/i, { exact: true }).first().isVisible().catch(() => false);
   if (signIn) return false;
-  return page.locator('#avatar-btn, ytcp-button#create-icon, #create-icon, ytcp-channel-name, #channel-name').first().isVisible({ timeout: 5000 }).catch(() => false);
+  const studioUrl = url.includes('studio.youtube.com');
+  const body = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
+  if (studioUrl && STUDIO_DASHBOARD_PATTERN.test(body)) return true;
+  const dashboardSignal = await page.locator('#avatar-btn, ytcp-button#create-icon, #create-icon, ytcp-channel-name, #channel-name').first().isVisible({ timeout: 2500 }).catch(() => false)
+    || await page.getByRole('button', { name:/create/i }).first().isVisible({ timeout: 1000 }).catch(() => false)
+    || await page.getByText(/^create$/i).first().isVisible({ timeout: 1000 }).catch(() => false)
+    || await page.getByText(/upload videos?/i).first().isVisible({ timeout: 1000 }).catch(() => false)
+    || await page.getByText(/^content$/i).first().isVisible({ timeout: 1000 }).catch(() => false);
+  return Boolean(studioUrl && dashboardSignal);
 }
 
 async function studioHasSecurityChallenge(page) {
-  const body = await page.locator('body').innerText({ timeout: 1500 }).catch(() => '');
-  return SECURITY_CHALLENGE_PATTERN.test(body);
+  const url = page.url().toLowerCase();
+  if (url.includes('accounts.google.com') || url.includes('servicelogin')) {
+    const body = await page.locator('body').innerText({ timeout: 1500 }).catch(() => '');
+    return SECURITY_CHALLENGE_PATTERN.test(body);
+  }
+  const challengeText = page.getByText(SECURITY_CHALLENGE_PATTERN).first();
+  if (await challengeText.isVisible({ timeout: 800 }).catch(() => false)) return true;
+  const dialogs = page.locator('[role="dialog"], ytcp-dialog, tp-yt-paper-dialog');
+  const count = Math.min(await dialogs.count().catch(() => 0), 4);
+  for (let i = 0; i < count; i += 1) {
+    const dialog = dialogs.nth(i);
+    if (!(await dialog.isVisible({ timeout: 250 }).catch(() => false))) continue;
+    const text = await dialog.innerText({ timeout: 800 }).catch(() => '');
+    if (SECURITY_CHALLENGE_PATTERN.test(text)) return true;
+  }
+  return false;
 }
 
 async function dismissConnectionInterstitials(page) {
@@ -158,7 +181,9 @@ async function dismissConnectionInterstitials(page) {
 }
 
 async function assertStudioReadyForAutomation(userId, page) {
-  await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
+  if (!page.url().toLowerCase().includes('studio.youtube.com')) {
+    await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
+  }
   const started = Date.now();
   while (Date.now() - started < 45_000) {
     await dismissConnectionInterstitials(page);
@@ -171,7 +196,8 @@ async function assertStudioReadyForAutomation(userId, page) {
     if (await studioLooksAuthenticated(page)) return;
     await new Promise(resolve => setTimeout(resolve, 1500));
   }
-  throw new Error('A completed YouTube Studio login was not detected. Finish Google verification until the Studio dashboard appears.');
+  const body = await page.locator('body').innerText({ timeout: 1500 }).catch(() => '');
+  throw new Error(`A completed YouTube Studio login was not detected. Current page: ${page.url()}. Visible text: ${body.slice(0, 220).replace(/\s+/g, ' ')}`);
 }
 
 export async function startYouTubeLogin(userId) {
