@@ -8,7 +8,7 @@ WORKDIR /deps
 COPY package.json package-lock.json ./
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN NODE_OPTIONS="--max-old-space-size=1024" \
-    npm ci --omit=dev --no-fund --no-audit --ignore-scripts
+    npm install --omit=dev --no-fund --no-audit --ignore-scripts
 
 # Production stage: Playwright image with pre-installed Chromium
 FROM mcr.microsoft.com/playwright:v1.61.1-noble
