@@ -113,12 +113,22 @@ async function clickAccountVerificationButton(page) {
     };
     const isEnabled = el => !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.hasAttribute('disabled');
     const roots = Array.from(document.querySelectorAll('[role="dialog"], ytcp-dialog, tp-yt-paper-dialog, div'))
-      .filter(el => isVisible(el) && verificationPattern.test(el.innerText || ''))
-      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+      .filter(el => {
+        if (!isVisible(el) || !verificationPattern.test(el.innerText || '')) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width >= 280 && rect.width <= 900 && rect.height >= 100 && rect.height <= 520;
+      })
+      .sort((a, b) => {
+        const aRect = a.getBoundingClientRect();
+        const bRect = b.getBoundingClientRect();
+        return (aRect.width * aRect.height) - (bRect.width * bRect.height);
+      });
     for (const root of roots) {
       const buttons = Array.from(root.querySelectorAll('button, [role="button"]'))
         .filter(el => isVisible(el) && isEnabled(el));
-      const target = buttons.find(el => buttonPattern.test((el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim()));
+      const target = buttons
+        .filter(el => buttonPattern.test((el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim()))
+        .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0];
       if (target) {
         target.click();
         return (target.innerText || target.textContent || target.getAttribute('aria-label') || 'verification button').trim();
@@ -145,11 +155,21 @@ async function waitForManualAccountApproval(page, log = () => {}, captureVerific
   }
   log('warning', 'Google account verification is waiting for manual approval. The worker will wait up to 10 minutes.');
   const started = Date.now();
+  let lastScreenshotAt = Date.now();
+  let waitingScreenshots = 0;
   while (Date.now() - started < ACCOUNT_VERIFICATION_WAIT_MS) {
     if (!(await hasAccountVerification(page))) {
       log('info', 'Google account verification cleared; continuing upload.');
       await sleep(2500);
       return true;
+    }
+    if (Date.now() - lastScreenshotAt >= 15_000 && waitingScreenshots < 36) {
+      const waitingScreenshot = await captureVerificationScreenshot().catch(() => '');
+      if (waitingScreenshot) {
+        waitingScreenshots += 1;
+        log('warning', 'Google verification waiting screenshot captured.', { screenshot:waitingScreenshot });
+      }
+      lastScreenshotAt = Date.now();
     }
     await sleep(5000);
   }
@@ -471,7 +491,7 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
   const probe = validateContentType(await probeVideo(videoPath), post.content_type);
   log('info','Video file validated.',probe);
   let browser; let context; let page; let popupTimer;
-  let verificationScreenshotName = '';
+  let verificationScreenshotCount = 0;
   try {
     browser = await chromium.launch({
       headless:config.browserHeadless,
@@ -485,12 +505,12 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     page = await context.newPage();
     const captureVerificationScreenshot = async () => {
       if (!page || !screenshotPath) return '';
-      if (verificationScreenshotName) return verificationScreenshotName;
       const parsed = path.parse(screenshotPath);
-      const verificationPath = path.join(parsed.dir, `${parsed.name}-google-verification${parsed.ext || '.png'}`);
+      verificationScreenshotCount += 1;
+      const index = String(verificationScreenshotCount).padStart(2, '0');
+      const verificationPath = path.join(parsed.dir, `${parsed.name}-google-verification-${index}${parsed.ext || '.png'}`);
       await page.screenshot({ path:verificationPath, fullPage:true });
-      verificationScreenshotName = path.basename(verificationPath);
-      return verificationScreenshotName;
+      return path.basename(verificationPath);
     };
     page.on('dialog', dialog => dialog.dismiss().catch(() => {}));
     popupTimer = setInterval(() => void dismissObstructions(page,log).catch(() => {}),2000);
