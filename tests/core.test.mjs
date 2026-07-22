@@ -8,6 +8,7 @@ import { encryptJson, decryptJson } from '../src/services/crypto.js';
 import { validateContentType } from '../src/services/media-probe.js';
 import { uploadSchema } from '../src/validation.js';
 import { parseUploadsWorkbook } from '../src/services/excel.js';
+import { browserProfileDir, ensureChannelProfile } from '../src/services/persistent-browser.js';
 
 process.env.SESSION_ENCRYPTION_KEY = Buffer.alloc(32,7).toString('base64');
 
@@ -48,4 +49,26 @@ test('Excel parser reads Videos and Shorts sheets', async () => {
   assert.deepEqual(rows.map(row => row.contentType),['VIDEO','SHORT']);
   assert.equal(rows.every(row => !row.validationError),true);
   await fs.rm(directory,{ recursive:true,force:true });
+});
+
+test('persistent browser profile paths are isolated by user and channel', async () => {
+  const userA = '00000000-0000-4000-8000-000000000001';
+  const userB = '00000000-0000-4000-8000-000000000002';
+  const channelA = '00000000-0000-4000-8000-000000000101';
+  const channelB = '00000000-0000-4000-8000-000000000102';
+  const a = browserProfileDir(userA, channelA);
+  assert.notEqual(a, browserProfileDir(userA, channelB));
+  assert.notEqual(a, browserProfileDir(userB, channelA));
+  assert.match(a, /browser-profiles/);
+  assert.throws(() => browserProfileDir('../bad', channelA), /Invalid user identifier/);
+  assert.throws(() => browserProfileDir(userA, '../../bad'), /Invalid channel identifier/);
+});
+
+test('persistent browser profile directory is created with private permissions', async () => {
+  const userId = '00000000-0000-4000-8000-000000000011';
+  const channelId = '00000000-0000-4000-8000-000000000111';
+  const directory = await ensureChannelProfile(userId, channelId);
+  const stat = await fs.stat(directory);
+  assert.equal(stat.isDirectory(), true);
+  if (process.platform !== 'win32') assert.equal(stat.mode & 0o777, 0o700);
 });

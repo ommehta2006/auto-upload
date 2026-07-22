@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { chromium } from 'playwright';
 import { config } from '../config.js';
 import { probeVideo, validateContentType } from './media-probe.js';
+import { acquireBrowserLock, launchYouTubePersistentContext, seedPersistentProfileFromStorageState } from './persistent-browser.js';
 
 export class YouTubeAutomationError extends Error {
   constructor(message, code = 'AUTOMATION_FAILED', options = {}) {
@@ -14,8 +14,27 @@ export class YouTubeAutomationError extends Error {
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const YOUTUBE_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
 const ACCOUNT_VERIFICATION_PATTERN = /verify it'?s you|verify it’s you|suspicious activity|confirm your identity|to continue, we need to confirm|check your phone|enter the code|two-step verification/i;
+
+async function humanPause(min = 120, max = 520) {
+  const ms = Math.round(min + Math.random() * (max - min));
+  await sleep(ms);
+}
+
+async function humanClick(locator, timeout = 2500) {
+  await humanPause(100, 420);
+  await locator.click({ timeout, delay:Math.round(20 + Math.random() * 80) });
+  await humanPause(180, 620);
+}
+
+async function humanReplaceText(locator, value, timeout = 5000) {
+  await humanPause(100, 380);
+  await locator.click({ timeout });
+  await locator.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A').catch(() => {});
+  await locator.press('Backspace').catch(() => {});
+  await locator.type(String(value), { delay:Math.round(10 + Math.random() * 28), timeout });
+  await humanPause(180, 520);
+}
 
 async function visible(locator, timeout = 1200) {
   return locator?.first().isVisible({ timeout }).catch(() => false);
@@ -25,7 +44,7 @@ async function clickCandidates(candidates, timeout = 2500) {
   for (const candidate of candidates) {
     const locator = typeof candidate === 'function' ? candidate() : candidate;
     if (await visible(locator, Math.min(timeout, 1500))) {
-      try { await locator.first().click({ timeout }); return true; } catch {}
+      try { await humanClick(locator.first(), timeout); return true; } catch {}
     }
   }
   return false;
@@ -38,11 +57,9 @@ async function fillCandidates(candidates, value, timeout = 3000) {
     try {
       const target = locator.first();
       if (await target.getAttribute('contenteditable').catch(() => null)) {
-        await target.click();
-        await target.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
-        await target.fill(String(value));
+        await humanReplaceText(target, value, timeout);
       } else {
-        await target.fill(String(value), { timeout });
+        await humanReplaceText(target, value, timeout);
       }
       return true;
     } catch {}
@@ -58,7 +75,7 @@ async function dismissObstructions(page, log = () => {}) {
   ];
   for (const candidate of studioSkip) {
     if (await visible(candidate, 500)) {
-      if (await candidate.first().click({ timeout: 1500 }).then(() => true).catch(() => false)) {
+      if (await humanClick(candidate.first(), 1500).then(() => true).catch(() => false)) {
         log('info', 'Skipped YouTube Studio unsupported-browser interstitial.');
         await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
         await sleep(2000);
@@ -77,7 +94,7 @@ async function dismissObstructions(page, log = () => {}) {
       if (!(await visible(button, 300))) continue;
       const dialogText = await button.locator('xpath=ancestor::*[@role="dialog"][1]').innerText().catch(() => '');
       if (/details|video elements|checks|visibility|upload videos/i.test(dialogText)) continue;
-      if (await button.click({ timeout: 1200 }).then(() => true).catch(() => false)) {
+      if (await humanClick(button, 1200).then(() => true).catch(() => false)) {
         dismissed += 1;
         await sleep(150);
       }
@@ -88,7 +105,7 @@ async function dismissObstructions(page, log = () => {}) {
   for (let i = 0; i < closeCount; i += 1) {
     const button = closeButtons.nth(i);
     if (await visible(button, 200)) {
-      await button.click({ timeout: 1000 }).catch(() => {});
+      await humanClick(button, 1000).catch(() => {});
       dismissed += 1;
     }
   }
@@ -107,17 +124,17 @@ async function waitForManualAccountApproval(page, log = () => {}, captureVerific
   if (screenshot) {
     log('warning', 'Google verification challenge detected; screenshot captured.', { screenshot });
   }
-  throw new YouTubeAutomationError('Google is requesting manual verification. Open the remote YouTube Studio window, complete the prompt yourself, save the encrypted session, then the blocked upload will retry.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
+  throw new YouTubeAutomationError('Google is requesting manual verification. Open the secure YouTube Studio browser, complete the prompt yourself, save the encrypted session, then resume the upload.', 'GOOGLE_VERIFICATION_REQUIRED', { retryable:false });
 }
 
 async function assertLoggedIn(page, log = () => {}, captureVerificationScreenshot = async () => '') {
   const url = page.url().toLowerCase();
   const body = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
   if (url.includes('accounts.google.com') || url.includes('servicelogin') || /sign in to continue to youtube/i.test(body)) {
-    throw new YouTubeAutomationError('YouTube login is required. Reconnect the channel.', 'LOGIN_REQUIRED', { retryable:false });
+    throw new YouTubeAutomationError('YouTube login is required. Open the secure YouTube Studio browser and sign in again.', 'YOUTUBE_LOGIN_REQUIRED', { retryable:false });
   }
   if (/couldn'?t sign you in/i.test(body)) {
-    throw new YouTubeAutomationError('Google could not sign in with this browser session. Reconnect the channel and complete Google login.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
+    throw new YouTubeAutomationError('Google could not sign in with this browser session. Open the secure YouTube Studio browser and complete Google login.', 'YOUTUBE_LOGIN_REQUIRED', { retryable:false });
   }
   if (ACCOUNT_VERIFICATION_PATTERN.test(body)) {
     await waitForManualAccountApproval(page, log, captureVerificationScreenshot);
@@ -215,8 +232,8 @@ async function chooseByText(page, pattern) {
   const target = page.getByText(pattern, { exact:false }).first();
   if (!(await visible(target, 1200))) return false;
   const clickable = target.locator('xpath=ancestor-or-self::*[self::tp-yt-paper-radio-button or self::tp-yt-paper-checkbox or self::ytcp-checkbox-lit or @role="radio" or @role="checkbox" or @role="option" or self::button][1]');
-  if (await visible(clickable, 300)) return clickable.click({ timeout:2500 }).then(() => true).catch(() => false);
-  return target.click({ timeout:2500 }).then(() => true).catch(() => false);
+  if (await visible(clickable, 300)) return humanClick(clickable, 2500).then(() => true).catch(() => false);
+  return humanClick(target, 2500).then(() => true).catch(() => false);
 }
 
 async function setAudience(page, post) {
@@ -242,7 +259,7 @@ async function setCheckboxNearText(page, pattern, desired) {
   const target = (await visible(checkbox, 300)) ? checkbox : text.locator('xpath=ancestor::*[1]').locator('ytcp-checkbox-lit,tp-yt-paper-checkbox,[role="checkbox"]').first();
   if (!(await visible(target, 500))) return false;
   const checked = (await target.getAttribute('aria-checked').catch(() => null)) === 'true' || await target.evaluate(el => Boolean(el.checked)).catch(() => false);
-  if (checked !== desired) await target.click({ timeout:2500 });
+  if (checked !== desired) await humanClick(target, 2500);
   return true;
 }
 
@@ -420,23 +437,32 @@ async function tryUploadCaptions(page, post, captionPath, warnings) {
   }
 }
 
-export async function uploadToYouTube({ post, storageState, videoPath, thumbnailPath, captionPath, screenshotPath, log = () => {} }) {
+export async function uploadToYouTube({ post, storageState, videoPath, thumbnailPath, captionPath, screenshotPath, log = () => {}, onStage = async () => {} }) {
   const warnings = [];
   const probe = validateContentType(await probeVideo(videoPath), post.content_type);
   log('info','Video file validated.',probe);
-  let browser; let context; let page; let popupTimer;
+  const channelId = post.browser_profile_id || post.channel_id || post.youtube_account_id;
+  if (!channelId) throw new YouTubeAutomationError('The YouTube browser profile is missing for this channel.', 'BROWSER_PROFILE_STORAGE_UNAVAILABLE', { retryable:false });
+  let context; let page; let popupTimer; let browserLock; let profileDir;
   let verificationScreenshotCount = 0;
   try {
-    browser = await chromium.launch({
+    browserLock = await acquireBrowserLock({
+      userId:post.user_id,
+      channelId,
+      owner:'UPLOAD',
+      metadata:{ uploadId:post.upload_id }
+    });
+    const launched = await launchYouTubePersistentContext({
+      userId:post.user_id,
+      channelId,
+      mode:'UPLOAD',
       headless:config.browserHeadless,
-      slowMo:config.slowMoMs,
-      args:['--no-sandbox','--disable-dev-shm-usage','--disable-notifications','--no-first-run','--disable-features=Translate,MediaRouter','--window-size=1440,1000']
+      timezoneId:post.timezone || 'Asia/Kolkata'
     });
-    context = await browser.newContext({ locale:'en-US', timezoneId:post.timezone || 'Asia/Kolkata', viewport:{ width:1440,height:1000 }, storageState, userAgent:YOUTUBE_USER_AGENT, acceptDownloads:false });
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
-    page = await context.newPage();
+    context = launched.context;
+    profileDir = launched.profileDir;
+    await seedPersistentProfileFromStorageState(profileDir, context, storageState);
+    page = context.pages()[0] || await context.newPage();
     const captureVerificationScreenshot = async () => {
       if (!page || !screenshotPath) return '';
       const parsed = path.parse(screenshotPath);
@@ -449,12 +475,15 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     page.on('dialog', dialog => dialog.dismiss().catch(() => {}));
     popupTimer = setInterval(() => void dismissObstructions(page,log).catch(() => {}),2000);
     popupTimer.unref();
+    await onStage('BEFORE_STUDIO_OPEN');
     await page.goto(config.youtubeStudioUrl,{ waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
     await assertLoggedIn(page, log, captureVerificationScreenshot);
     await dismissObstructions(page,log);
     await waitForStudioReady(page,log,captureVerificationScreenshot);
     await openUploadDialog(page);
+    await onStage('BEFORE_FILE_SELECTION');
     await chooseVideoFile(page,videoPath);
+    await onStage('FILE_SELECTED');
     await waitForDetails(page,log,captureVerificationScreenshot);
     await setTextBox(page,'title',post.title,true);
     await setTextBox(page,'description',post.description,false);
@@ -462,9 +491,12 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     if (post.playlist_name && !(await setPlaylist(page,post.playlist_name))) warnings.push(`Playlist “${post.playlist_name}” was not found or could not be selected.`);
     await setAudience(page,post);
     await applyAdvancedSettings(page,post,warnings);
+    await onStage('METADATA_ENTERED');
     await reachVisibility(page);
     await setVisibility(page,post);
+    await onStage('VISIBILITY_SELECTED');
     const result = await finalize(page,post);
+    await onStage('COMPLETION_CONFIRMED');
     post.youtube_video_id = result.videoId;
     await tryUploadCaptions(page,post,captionPath,warnings);
     const nextState = await context.storageState({ indexedDB:true }).catch(() => context.storageState());
@@ -476,6 +508,6 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
   } finally {
     if (popupTimer) clearInterval(popupTimer);
     await context?.close().catch(() => {});
-    await browser?.close().catch(() => {});
+    await browserLock?.release().catch(() => {});
   }
 }

@@ -5,12 +5,16 @@
 - Every state-changing request uses a per-session CSRF token, including multipart uploads.
 - Authentication and upload endpoints are rate limited.
 - Google credentials are entered only in the remote Google/YouTube browser. They are never accepted by an application form.
-- Playwright storage state is encrypted with AES-256-GCM. `SESSION_ENCRYPTION_KEY` must be backed up securely; losing it invalidates connections.
+- Each YouTube channel uses one long-lived Chromium profile under persistent storage. Playwright storage state is encrypted with AES-256-GCM only as an emergency backup; the persistent browser profile is the primary session mechanism.
 - Customer files use randomized server names, MIME-signature checks, private filesystem permissions and account-scoped database lookups.
 - Relative paths are checked against the storage root to prevent traversal.
 - Helmet security headers, a restrictive Content Security Policy and disabled framework banners are enabled.
 - Logs truncate messages and never intentionally include passwords or raw cookies.
 - Screenshots may contain Studio metadata. They are private, account-scoped and pruned automatically.
+
+## Google verification limitation
+
+This architecture greatly reduces repeated Google verification by preserving the same browser identity, but Google may still request verification after IP changes, password changes, unusual activity, security-policy changes or risk signals.
 
 ## Production recommendations
 

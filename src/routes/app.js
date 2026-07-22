@@ -16,6 +16,7 @@ import { probeVideo, validateContentType } from '../services/media-probe.js';
 import { parseUploadsWorkbook, buildUploadsWorkbook } from '../services/excel.js';
 import { addLog } from '../services/logs.js';
 import { startYouTubeLogin, restartYouTubeLogin, completeYouTubeLogin, cancelYouTubeLogin, disconnectYouTube, loginSessionStatus } from '../services/login-manager.js';
+import { checkYouTubeSession } from '../services/session-health.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -69,7 +70,7 @@ async function dashboardData(userId) {
   const [user,settings,account,media,uploads,logs,counts,storage] = await Promise.all([
     query('SELECT id,email,display_name,created_at FROM users WHERE id=$1',[userId]),
     settingsForUser(userId),
-    query('SELECT id,label,status,channel_name,channel_url,last_checked_at,last_error,connected_at FROM youtube_accounts WHERE user_id=$1',[userId]),
+    query('SELECT id,label,status,channel_name,channel_url,last_checked_at,last_error,connected_at,browser_profile_health,last_session_check_at,last_successful_verification_at,last_successful_upload_at FROM youtube_accounts WHERE user_id=$1',[userId]),
     query('SELECT * FROM media_files WHERE user_id=$1 ORDER BY created_at DESC LIMIT 300',[userId]),
     query(`SELECT u.*,m.original_name AS media_name,m.size_bytes AS media_size,t.original_name AS thumbnail_name,c.original_name AS caption_name_file
            FROM uploads u LEFT JOIN media_files m ON m.id=u.media_id LEFT JOIN media_files t ON t.id=u.thumbnail_id LEFT JOIN media_files c ON c.id=u.caption_file_id
@@ -80,13 +81,13 @@ async function dashboardData(userId) {
       COUNT(*) FILTER (WHERE content_type='SHORT')::int AS shorts,
       COUNT(*) FILTER (WHERE status='READY')::int AS ready,
       COUNT(*) FILTER (WHERE status='UPLOADED')::int AS uploaded,
-      COUNT(*) FILTER (WHERE status IN ('FAILED','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','REVIEW_REQUIRED','FILE_MISSING'))::int AS attention
+      COUNT(*) FILTER (WHERE status IN ('FAILED','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION','RESUME_AVAILABLE','REVIEW_REQUIRED','FILE_MISSING'))::int AS attention
       FROM uploads WHERE user_id=$1`,[userId]),
     query('SELECT COALESCE(SUM(size_bytes),0)::bigint AS used_bytes FROM media_files WHERE user_id=$1',[userId])
   ]);
   return {
     user:user.rows[0],settings,account:account.rows[0],media:media.rows,uploads:uploads.rows,logs:logs.rows,
-    counts:counts.rows[0],storageUsedBytes:Number(storage.rows[0].used_bytes || 0),loginSession:loginSessionStatus(userId)
+    counts:counts.rows[0],storageUsedBytes:Number(storage.rows[0].used_bytes || 0),loginSession:loginSessionStatus(userId),railwayRegion:config.railwayRegion
   };
 }
 
@@ -323,7 +324,7 @@ router.post('/app/uploads/:id/retry',async (req,res,next) => {
       [req.params.id,req.session.userId]
     );
     if (!current.rowCount) throw new Error('The upload could not be retried.');
-    if (current.rows[0].status === 'ACCOUNT_ACTION_REQUIRED' && current.rows[0].account_status !== 'CONNECTED') {
+    if (['ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION','RESUME_AVAILABLE','LOGIN_REQUIRED'].includes(current.rows[0].status) && current.rows[0].account_status !== 'CONNECTED') {
       flash(req,'error','Complete YouTube Studio verification and save the channel connection before retrying this upload.');
       return res.redirect('/app#channel');
     }
@@ -379,6 +380,15 @@ router.get('/app/youtube/remote',async (req,res,next) => {
   try {
     const session = req.query.restart === '1' ? await restartYouTubeLogin(req.session.userId) : await startYouTubeLogin(req.session.userId);
     res.redirect(session.remoteUrl);
+  } catch (error) { next(error); }
+});
+router.post('/app/youtube/check',async (req,res,next) => {
+  try {
+    const account = await query('SELECT id FROM youtube_accounts WHERE user_id=$1',[req.session.userId]);
+    if (!account.rowCount) throw new Error('No YouTube channel record was found.');
+    const result = await checkYouTubeSession({ userId:req.session.userId, channelId:account.rows[0].id });
+    flash(req,result.status === 'HEALTHY' ? 'success' : 'warning',`Session health: ${result.status}.`);
+    res.redirect('/app#channel');
   } catch (error) { next(error); }
 });
 router.post('/app/youtube/complete',async (req,res,next) => {

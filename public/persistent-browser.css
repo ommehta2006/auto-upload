@@ -1,0 +1,40 @@
+.profile-health {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.profile-health span {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafbfe;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-health strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.status-verification_required,
+.status-verification_in_progress,
+.status-session_expired,
+.status-reconnect_required,
+.status-paused_for_verification,
+.status-resume_available {
+  background: #fff3d7;
+  color: #8b5b00;
+}
+
+@media (max-width: 980px) {
+  .profile-health { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 640px) {
+  .profile-health { grid-template-columns: 1fr; }
+}

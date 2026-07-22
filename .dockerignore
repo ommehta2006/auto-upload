@@ -4,6 +4,7 @@ npm-debug.log*
 .git
 .gitignore
 storage/**
+storage/browser-profiles/**
 !storage/.gitkeep
 tmp/**
 !tmp/.gitkeep

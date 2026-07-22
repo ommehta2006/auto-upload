@@ -34,8 +34,13 @@ CREATE TABLE IF NOT EXISTS youtube_accounts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   label TEXT NOT NULL DEFAULT 'YouTube channel',
-  status TEXT NOT NULL DEFAULT 'DISCONNECTED' CHECK (status IN ('DISCONNECTED','CONNECTING','CONNECTED','ATTENTION_REQUIRED','ERROR')),
+  status TEXT NOT NULL DEFAULT 'DISCONNECTED' CHECK (status IN ('DISCONNECTED','CONNECTING','CONNECTED','SESSION_CHECKING','VERIFICATION_REQUIRED','VERIFICATION_IN_PROGRESS','VERIFICATION_COMPLETED','SESSION_EXPIRED','RECONNECT_REQUIRED','ATTENTION_REQUIRED','ERROR')),
   encrypted_state TEXT,
+  browser_profile_id TEXT NOT NULL DEFAULT '',
+  browser_profile_health TEXT NOT NULL DEFAULT 'UNKNOWN',
+  last_session_check_at TIMESTAMPTZ,
+  last_successful_verification_at TIMESTAMPTZ,
+  last_successful_upload_at TIMESTAMPTZ,
   channel_name TEXT NOT NULL DEFAULT '',
   channel_url TEXT NOT NULL DEFAULT '',
   last_checked_at TIMESTAMPTZ,
@@ -101,7 +106,9 @@ CREATE TABLE IF NOT EXISTS uploads (
   remix_mode TEXT NOT NULL DEFAULT 'VIDEO_AND_AUDIO' CHECK (remix_mode IN ('VIDEO_AND_AUDIO','AUDIO_ONLY','NONE')),
   related_video TEXT NOT NULL DEFAULT '',
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  status TEXT NOT NULL DEFAULT 'READY' CHECK (status IN ('READY','UPLOADING','UPLOADED','PROCESSING','FAILED','FILE_MISSING','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','REVIEW_REQUIRED','PAUSED')),
+  status TEXT NOT NULL DEFAULT 'READY' CHECK (status IN ('READY','UPLOADING','UPLOADED','PROCESSING','FAILED','FILE_MISSING','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION','RESUME_AVAILABLE','REVIEW_REQUIRED','PAUSED')),
+  workflow_stage TEXT NOT NULL DEFAULT 'BEFORE_STUDIO_OPEN',
+  duplicate_risk TEXT NOT NULL DEFAULT 'NONE',
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   last_attempt_at TIMESTAMPTZ,
   uploaded_at TIMESTAMPTZ,
@@ -125,11 +132,24 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS youtube_browser_locks (
+  channel_id UUID PRIMARY KEY REFERENCES youtube_accounts(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  lock_token UUID NOT NULL DEFAULT gen_random_uuid(),
+  owner TEXT NOT NULL,
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_uploads_due ON uploads(status, enabled, automation_start_at);
 CREATE INDEX IF NOT EXISTS idx_uploads_user_status ON uploads(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_uploads_content_type ON uploads(user_id, content_type, automation_start_at DESC);
 CREATE INDEX IF NOT EXISTS idx_media_user_kind ON media_files(user_id, kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_user_created ON activity_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_browser_locks_expires ON youtube_browser_locks(expires_at);
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   sid VARCHAR NOT NULL COLLATE "default",

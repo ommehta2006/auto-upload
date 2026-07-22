@@ -1,12 +1,11 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
-import path from 'node:path';
-import { chromium } from 'playwright';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { decryptJson, encryptJson, randomToken } from './crypto.js';
 import { addLog } from './logs.js';
+import { acquireBrowserLock, archiveChannelProfile, ensureChannelProfile, launchYouTubePersistentContext, seedPersistentProfileFromStorageState } from './persistent-browser.js';
 
 let activeSession = null;
 const SECURITY_CHALLENGE_PATTERN = /verify it'?s you|verify it’s you|confirm your identity|suspicious activity|to continue, we need to confirm|check your phone|enter the code|two-step verification|couldn'?t sign you in/i;
@@ -54,11 +53,9 @@ async function closeActive(reason = 'closed') {
   activeSession = null;
   clearTimeout(session.timeout);
   await session.context?.close().catch(() => {});
-  await session.browser?.close().catch(() => {});
-  stopProcess(session.chrome);
+  await session.browserLock?.release().catch(() => {});
   stopProcess(session.websockify);
   stopProcess(session.x11vnc);
-  if (session.profileDir) await fs.promises.rm(session.profileDir,{ recursive:true, force:true }).catch(() => {});
   if (session.tokenFile) { try { fs.unlinkSync(session.tokenFile); } catch {} }
   await addLog(session.userId, 'info', 'YouTube connection window closed.', { reason });
 }
@@ -90,45 +87,18 @@ function remoteUrl(accessToken) {
   return url.toString();
 }
 
-async function startSigninBrowser(existingState) {
-  const profileDir = path.join(config.tempDir, `youtube-login-${randomToken(8)}`);
-  await fs.promises.mkdir(profileDir, { recursive:true, mode:0o700 });
-  const debuggingPort = await freePort();
-  const executable = chromium.executablePath();
-  const chrome = spawn(executable, [
-    `--user-data-dir=${profileDir}`,
-    `--remote-debugging-port=${debuggingPort}`,
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-notifications',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--password-store=basic',
-    '--use-mock-keychain',
-    '--window-size=1440,1000',
-    '--disable-features=Translate,MediaRouter',
-    'about:blank'
-  ], { env:{ ...process.env, DISPLAY:config.display }, stdio:['ignore','ignore','pipe'] });
-  chrome.stderr?.on('data', data => {
-    const text = String(data).trim();
-    if (text && !/DevTools listening|dbus|sandbox/i.test(text)) console.error(`[signin-browser] ${text}`);
+async function startSigninBrowser({ userId, channelId, existingState, timezone }) {
+  const profileDir = await ensureChannelProfile(userId, channelId);
+  const { context } = await launchYouTubePersistentContext({
+    userId,
+    channelId,
+    mode:'VERIFICATION',
+    headless:false,
+    timezoneId:timezone || 'Asia/Kolkata'
   });
-  try {
-    await waitForPort('127.0.0.1', debuggingPort, 15_000);
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debuggingPort}`);
-    const context = browser.contexts()[0];
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      window.chrome ||= { runtime:{} };
-    }).catch(() => {});
-    if (existingState?.cookies?.length) await context.addCookies(existingState.cookies).catch(() => {});
-    const page = context.pages()[0] || await context.newPage();
-    return { chrome, browser, context, page, profileDir };
-  } catch (error) {
-    stopProcess(chrome);
-    await fs.promises.rm(profileDir,{ recursive:true, force:true }).catch(() => {});
-    throw error;
-  }
+  await seedPersistentProfileFromStorageState(profileDir, context, existingState);
+  const page = context.pages()[0] || await context.newPage();
+  return { context, page, profileDir };
 }
 
 async function studioLooksAuthenticated(page) {
@@ -222,16 +192,19 @@ export async function startYouTubeLogin(userId) {
   }
   const accountResult = await query(
     `INSERT INTO youtube_accounts (user_id,status) VALUES ($1,'CONNECTING')
-     ON CONFLICT (user_id) DO UPDATE SET status='CONNECTING',last_error=NULL,updated_at=NOW() RETURNING *`, [userId]
+     ON CONFLICT (user_id) DO UPDATE SET status='CONNECTING',last_error=NULL,browser_profile_id=COALESCE(NULLIF(youtube_accounts.browser_profile_id,''),youtube_accounts.id::text),updated_at=NOW()
+     RETURNING *`, [userId]
   );
   const account = accountResult.rows[0];
-  let remote; let browser; let context; let signin;
+  const channelId = account.browser_profile_id || account.id;
+  let remote; let context; let signin; let browserLock;
   try {
     const existingState = account.encrypted_state ? decryptJson(account.encrypted_state) : undefined;
+    browserLock = await acquireBrowserLock({ userId, channelId, owner:'VERIFICATION', metadata:{ reason:'youtube_login' } });
     const accessToken = randomToken(18);
     remote = await startRemoteDesktop(accessToken);
-    signin = await startSigninBrowser(existingState);
-    ({ browser, context } = signin);
+    signin = await startSigninBrowser({ userId, channelId, existingState });
+    ({ context } = signin);
     const { page } = signin;
     await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
     await recoverStudioOops(page);
@@ -242,13 +215,12 @@ export async function startYouTubeLogin(userId) {
       await closeActive('expired');
     }, config.loginSessionMinutes * 60_000);
     timeout.unref();
-    activeSession = { userId, accountId:account.id, browser, context, page, chrome:signin.chrome, profileDir:signin.profileDir, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
-    await addLog(userId,'info','YouTube connection window opened.',{ expiresAt });
+    activeSession = { userId, accountId:account.id, channelId, browserLock, context, page, profileDir:signin.profileDir, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
+    await addLog(userId,'info','YouTube connection window opened.',{ channelId, expiresAt, event:'verification_session_started' });
     return { remoteUrl:url, expiresAt, alreadyActive:false };
   } catch (error) {
-    await context?.close().catch(() => {}); await browser?.close().catch(() => {});
-    stopProcess(signin?.chrome);
-    if (signin?.profileDir) await fs.promises.rm(signin.profileDir,{ recursive:true, force:true }).catch(() => {});
+    await context?.close().catch(() => {});
+    await browserLock?.release().catch(() => {});
     stopProcess(remote?.websockify); stopProcess(remote?.x11vnc);
     if (remote?.tokenFile) await fs.promises.rm(remote.tokenFile,{ force:true }).catch(() => {});
     await query(`UPDATE youtube_accounts SET status='ERROR',last_error=$2,updated_at=NOW() WHERE user_id=$1`,[userId,error.message]).catch(() => {});
@@ -263,27 +235,32 @@ export async function restartYouTubeLogin(userId) {
 
 export async function completeYouTubeLogin(userId) {
   if (!activeSession || activeSession.userId !== userId) throw new Error('No active YouTube connection window was found for this account.');
-  const { page, context } = activeSession;
+  const { page, context, channelId } = activeSession;
+  await assertStudioReadyForAutomation(userId, page);
   const state = await context.storageState({ indexedDB:true }).catch(() => context.storageState());
   const channelName = (await page.locator('#channel-name, ytcp-channel-name').first().innerText().catch(() => '')).trim().slice(0,150);
   const encrypted = encryptJson(state);
   await query(
-    `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,channel_name=$3,connected_at=NOW(),last_checked_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
+    `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,channel_name=$3,browser_profile_id=COALESCE(NULLIF(browser_profile_id,''),id::text),
+       browser_profile_health='HEALTHY',connected_at=NOW(),last_checked_at=NOW(),last_successful_verification_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
     [userId,encrypted,channelName]
   );
   const resumed = await query(
     `UPDATE uploads
-        SET status='READY',enabled=TRUE,error='',attempts=0,last_attempt_at=NULL,updated_at=NOW()
+        SET status=CASE WHEN workflow_stage IN ('BEFORE_STUDIO_OPEN','BEFORE_FILE_SELECTION') THEN 'READY' ELSE 'RESUME_AVAILABLE' END,
+            enabled=TRUE,error='',attempts=0,last_attempt_at=NULL,updated_at=NOW()
       WHERE user_id=$1
-        AND status IN ('LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED')
+        AND status IN ('LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION')
         AND youtube_url=''
       RETURNING upload_id`,
     [userId]
   );
   await addLog(userId,'success','YouTube browser session saved securely.',{
+    channelId,
     channelName,
     currentUrl:page.url(),
-    resumedUploads:resumed.rows.map(row => row.upload_id)
+    resumedUploads:resumed.rows.map(row => row.upload_id),
+    event:'verification_completed'
   });
   await closeActive('completed');
 }
@@ -295,8 +272,20 @@ export async function cancelYouTubeLogin(userId) {
 
 export async function disconnectYouTube(userId) {
   if (activeSession?.userId === userId) await closeActive('disconnected');
-  await query(`UPDATE youtube_accounts SET status='DISCONNECTED',encrypted_state=NULL,connected_at=NULL,last_checked_at=NOW(),last_error=NULL,channel_name='',channel_url='',updated_at=NOW() WHERE user_id=$1`,[userId]);
-  await addLog(userId,'warning','YouTube channel disconnected and encrypted session deleted.');
+  const account = await query('SELECT id,browser_profile_id FROM youtube_accounts WHERE user_id=$1',[userId]);
+  const channelId = account.rows[0]?.browser_profile_id || account.rows[0]?.id;
+  let browserLock; let archivedProfile = '';
+  try {
+    if (channelId) {
+      browserLock = await acquireBrowserLock({ userId, channelId, owner:'RECONNECT', metadata:{ reason:'disconnect' } });
+      archivedProfile = await archiveChannelProfile(userId, channelId);
+    }
+    await query(`UPDATE uploads SET status='PAUSED',enabled=FALSE,error='YouTube channel disconnected.',updated_at=NOW() WHERE user_id=$1 AND status IN ('READY','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION','RESUME_AVAILABLE')`,[userId]);
+    await query(`UPDATE youtube_accounts SET status='DISCONNECTED',encrypted_state=NULL,connected_at=NULL,last_checked_at=NOW(),last_error=NULL,channel_name='',channel_url='',browser_profile_health='UNKNOWN',updated_at=NOW() WHERE user_id=$1`,[userId]);
+    await addLog(userId,'warning','YouTube channel disconnected and browser profile archived.',{ channelId, archivedProfile });
+  } finally {
+    await browserLock?.release().catch(() => {});
+  }
 }
 
 export function loginSessionStatus(userId) {

@@ -55,7 +55,7 @@ async function claimNextUpload() {
       `SELECT u.*,m.relative_path AS media_path,m.original_name AS media_name,
               t.relative_path AS thumbnail_path,c.relative_path AS caption_path,
               s.maximum_uploads_per_day,s.minimum_gap_minutes,s.max_attempts,s.retry_delay_minutes,s.stale_upload_minutes,
-              s.timezone,s.upload_window_start,s.upload_window_end,a.encrypted_state,a.status AS account_status
+              s.timezone,s.upload_window_start,s.upload_window_end,a.id AS channel_id,a.browser_profile_id,a.encrypted_state,a.status AS account_status
        FROM uploads u
        JOIN user_settings s ON s.user_id=u.user_id
        LEFT JOIN media_files m ON m.id=u.media_id
@@ -72,7 +72,7 @@ async function claimNextUpload() {
         console.log(`Worker marked ${candidate.upload_id} as FILE_MISSING.`);
         continue;
       }
-      if (!candidate.encrypted_state || candidate.account_status !== 'CONNECTED') {
+      if (!candidate.channel_id || candidate.account_status !== 'CONNECTED') {
         await client.query(`UPDATE uploads SET status='LOGIN_REQUIRED',error='Connect YouTube before this upload can run.',updated_at=NOW() WHERE id=$1`,[candidate.id]);
         console.log(`Worker marked ${candidate.upload_id} as LOGIN_REQUIRED because the YouTube account is not connected.`);
         continue;
@@ -103,22 +103,26 @@ async function processUpload(post) {
   const screenshotPath = path.join(screenshotDir,screenshotName);
   const log = (level,message,details={}) => void addLog(post.user_id,level,message,{ uploadId:post.upload_id,...details });
   try {
-    const state = decryptJson(post.encrypted_state);
+    const state = post.encrypted_state ? decryptJson(post.encrypted_state) : undefined;
     const mediaPath = absoluteStoragePath(post.media_path);
     const thumbnailPath = post.thumbnail_path ? absoluteStoragePath(post.thumbnail_path) : null;
     const captionPath = post.caption_path ? absoluteStoragePath(post.caption_path) : null;
     const publishLocal = post.youtube_publish_at ? DateTime.fromJSDate(new Date(post.youtube_publish_at)).setZone(post.timezone) : null;
     post.youtube_publish_local_date = publishLocal?.toFormat('yyyy-MM-dd') || '';
     post.youtube_publish_local_time = publishLocal?.toFormat('HH:mm') || '';
+    const onStage = async workflowStage => {
+      await query(`UPDATE uploads SET workflow_stage=$2,updated_at=NOW() WHERE id=$1`, [post.id,workflowStage]);
+    };
     log('info',`Starting ${post.content_type === 'SHORT' ? 'Short' : 'video'} upload.`,{ media:post.media_name });
-    const result = await uploadToYouTube({ post,storageState:state,videoPath:mediaPath,thumbnailPath,captionPath,screenshotPath,log });
+    const result = await uploadToYouTube({ post,storageState:state,videoPath:mediaPath,thumbnailPath,captionPath,screenshotPath,log,onStage });
     await withTransaction(async client => {
       await client.query(
         `UPDATE uploads SET status='UPLOADED',uploaded_at=NOW(),youtube_video_id=$2,youtube_url=$3,warnings=$4::jsonb,error='',updated_at=NOW() WHERE id=$1`,
         [post.id,result.videoId || '',result.url || '',JSON.stringify(result.warnings || [])]
       );
       await client.query(
-        `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,last_checked_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
+        `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,browser_profile_id=COALESCE(NULLIF(browser_profile_id,''),id::text),
+           browser_profile_health='HEALTHY',last_checked_at=NOW(),last_successful_upload_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
         [post.user_id,encryptJson(result.storageState)]
       );
     });
@@ -127,17 +131,18 @@ async function processUpload(post) {
     });
   } catch (error) {
     const code = error instanceof YouTubeAutomationError ? error.code : 'AUTOMATION_FAILED';
-    const status = code === 'LOGIN_REQUIRED' ? 'LOGIN_REQUIRED'
-      : code === 'ACCOUNT_ACTION_REQUIRED' ? 'ACCOUNT_ACTION_REQUIRED'
+    const status = ['LOGIN_REQUIRED','YOUTUBE_LOGIN_REQUIRED'].includes(code) ? 'LOGIN_REQUIRED'
+      : ['ACCOUNT_ACTION_REQUIRED','GOOGLE_VERIFICATION_REQUIRED'].includes(code) ? 'PAUSED_FOR_VERIFICATION'
       : code === 'REVIEW_REQUIRED' || error?.outcomeUncertain ? 'REVIEW_REQUIRED'
       : post.attempts >= post.max_attempts ? 'FAILED' : 'READY';
     await query(`UPDATE uploads SET status=$2,error=$3,updated_at=NOW() WHERE id=$1`,[post.id,status,String(error.message || 'Upload failed.').slice(0,2000)]);
-    if (['LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED'].includes(status)) {
-      await query(`UPDATE youtube_accounts SET status='ATTENTION_REQUIRED',last_error=$2,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[post.user_id,String(error.message).slice(0,1000)]);
+    if (['LOGIN_REQUIRED','PAUSED_FOR_VERIFICATION'].includes(status)) {
+      const accountStatus = status === 'LOGIN_REQUIRED' ? 'SESSION_EXPIRED' : 'VERIFICATION_REQUIRED';
+      await query(`UPDATE youtube_accounts SET status=$2,browser_profile_health=$3,last_error=$4,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[post.user_id,accountStatus,status,String(error.message).slice(0,1000)]);
     }
     const screenshot = fs.existsSync(screenshotPath) ? screenshotName : '';
     await addLog(post.user_id,'error','YouTube upload failed.',{ uploadId:post.upload_id,status,code,error:error.message,screenshot });
-    if (['LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED'].includes(code)) {
+    if (['LOGIN_REQUIRED','YOUTUBE_LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','GOOGLE_VERIFICATION_REQUIRED'].includes(code)) {
       try {
         const session = await startYouTubeLogin(post.user_id);
         await addLog(post.user_id,'warning','Remote YouTube Studio login window is ready. Open it from the Channel panel, complete Google login or verification yourself, then save the encrypted session.',{

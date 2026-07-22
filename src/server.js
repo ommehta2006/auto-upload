@@ -14,6 +14,7 @@ import authRoutes from './routes/auth.js';
 import appRoutes from './routes/app.js';
 import { startWorker, stopWorker } from './worker.js';
 import { shutdownLoginManager } from './services/login-manager.js';
+import { ensurePersistentBrowserStorage, persistentBrowserStorageHealth } from './services/persistent-browser.js';
 
 for (const required of ['DATABASE_URL', 'SESSION_SECRET', 'SESSION_ENCRYPTION_KEY']) {
   if (!process.env[required]) throw new Error(`${required} is required.`);
@@ -21,6 +22,7 @@ for (const required of ['DATABASE_URL', 'SESSION_SECRET', 'SESSION_ENCRYPTION_KE
 
 await fs.mkdir(config.storageDir, { recursive: true, mode: 0o700 });
 await fs.mkdir(config.tempDir, { recursive: true, mode: 0o700 });
+await ensurePersistentBrowserStorage();
 
 async function cleanStaleTempFiles() {
   const cutoff = Date.now() - 60 * 60_000;
@@ -136,7 +138,9 @@ app.get('/', (req, res) => res.render('home', { title: 'YouTubePilot · Autonomo
 app.get('/health', async (_req, res) => {
   try {
     await query('SELECT 1');
-    res.json({ status: 'ok', time: new Date().toISOString() });
+    const persistentBrowserStorage = await persistentBrowserStorageHealth();
+    const healthy = persistentBrowserStorage.status === 'healthy';
+    res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'unhealthy', time: new Date().toISOString(), persistentBrowserStorage });
   } catch {
     res.status(503).json({ status: 'unhealthy' });
   }
