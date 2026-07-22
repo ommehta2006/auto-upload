@@ -1,0 +1,124 @@
+<main class="pilot-cinema" data-cinematic-login>
+  <canvas class="pilot-ambient" data-ambient-canvas aria-hidden="true"></canvas>
+  <canvas class="pilot-intro" data-intro-canvas aria-hidden="true"></canvas>
+  <div class="pilot-vignette" aria-hidden="true"></div>
+
+  <div class="pilot-intro-copy" data-intro-copy>
+    <div>
+      <div class="pilot-intro-eyebrow">Cloud publishing infrastructure</div>
+      <div class="pilot-intro-name">YouTube<span>Pilot</span></div>
+      <div class="pilot-intro-line">Automate with precision</div>
+    </div>
+  </div>
+
+  <div class="pilot-controls" data-intro-controls>
+    <button type="button" data-sound-toggle>Sound off</button>
+    <button type="button" data-skip-intro>Skip intro</button>
+  </div>
+
+  <header class="pilot-topbar">
+    <a class="pilot-brand" href="/">
+      <span class="pilot-mark"></span>
+      <span>YouTube<em>Pilot</em></span>
+    </a>
+    <button class="pilot-system" type="button" data-replay-intro>
+      <span class="pilot-dot"></span>
+      All systems operational
+    </button>
+  </header>
+
+  <section class="pilot-shell">
+    <div class="pilot-hero">
+      <div class="pilot-kicker">Creator operations platform</div>
+      <h1>Publish with discipline.<span>Scale without friction.</span></h1>
+      <p class="pilot-lead">A secure cloud workspace for scheduling YouTube Videos and Shorts, managing publishing metadata, and running uploads automatically while your devices stay offline.</p>
+      <div class="pilot-value-grid" aria-label="Platform highlights">
+        <div class="pilot-value"><small>Execution</small><strong>24/7 backend worker</strong></div>
+        <div class="pilot-value"><small>Formats</small><strong>Videos and Shorts</strong></div>
+        <div class="pilot-value"><small>Security</small><strong>Encrypted sessions</strong></div>
+      </div>
+    </div>
+
+    <section class="pilot-login" aria-label="<%= mode === 'register' ? 'Create workspace' : 'Sign in' %>">
+      <div class="pilot-login-header">
+        <div>
+          <% if (mode === 'register') { %>
+            <h2>Create workspace</h2>
+            <p>Start a private automation workspace backed by the live database.</p>
+          <% } else if (currentUser) { %>
+            <h2>Workspace ready</h2>
+            <p>You are signed in as <%= currentUser.email %>.</p>
+          <% } else { %>
+            <h2>Sign in</h2>
+            <p>Access your creator operations workspace.</p>
+          <% } %>
+        </div>
+        <div class="pilot-secure-badge" aria-hidden="true">&loz;</div>
+      </div>
+
+      <%- include('flash') %>
+
+      <% if (mode === 'register') { %>
+        <form class="pilot-form" method="post" action="/register" data-live-auth-form>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="invitationCode" value="">
+
+          <label>Display name
+            <span class="pilot-field"><input name="displayName" autocomplete="name" placeholder="Creator Ops" required minlength="2" maxlength="80"></span>
+          </label>
+
+          <label>Email address
+            <span class="pilot-field"><input type="email" name="email" autocomplete="email" placeholder="name@company.com" required></span>
+          </label>
+
+          <label>Password
+            <span class="pilot-field">
+              <input data-password-field type="password" name="password" autocomplete="new-password" placeholder="At least 12 characters" required minlength="12">
+              <button class="pilot-eye" data-password-toggle type="button" aria-label="Show password">&#9678;</button>
+            </span>
+          </label>
+
+          <label>Confirm password
+            <span class="pilot-field"><input type="password" name="confirmPassword" autocomplete="new-password" placeholder="Repeat your password" required minlength="12"></span>
+          </label>
+
+          <button class="pilot-primary" type="submit" data-submit-label="Creating workspace...">Create workspace</button>
+          <div class="pilot-signup">Already have an account? <a href="/login">Sign in</a></div>
+        </form>
+      <% } else if (currentUser) { %>
+        <div class="pilot-form">
+          <a class="pilot-primary pilot-primary-link" href="/app">Open dashboard</a>
+          <div class="pilot-signup">Backend sessions, uploads, and schedules are connected.</div>
+        </div>
+      <% } else { %>
+        <form class="pilot-form" method="post" action="/login" data-live-auth-form>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+          <label>Email address
+            <span class="pilot-field"><input type="email" name="email" autocomplete="email" placeholder="name@company.com" required></span>
+          </label>
+
+          <label>Password
+            <span class="pilot-field">
+              <input data-password-field type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required>
+              <button class="pilot-eye" data-password-toggle type="button" aria-label="Show password">&#9678;</button>
+            </span>
+          </label>
+
+          <div class="pilot-row">
+            <label class="pilot-remember"><input type="checkbox" name="remember">Remember this browser</label>
+            <span>Protected by server sessions</span>
+          </div>
+
+          <button class="pilot-primary" type="submit" data-submit-label="Opening workspace...">Continue to workspace</button>
+          <div class="pilot-signup">Need an account? <a href="/register">Create workspace</a></div>
+        </form>
+      <% } %>
+    </section>
+  </section>
+
+  <div class="pilot-footer">
+    <span>Secure session architecture &middot; Private storage &middot; Background execution</span>
+    <span>Production workspace</span>
+  </div>
+</main>

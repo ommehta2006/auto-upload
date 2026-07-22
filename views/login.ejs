@@ -1,10 +1,5 @@
 <%- include('partials/head') %>
-<link rel="stylesheet" href="/assets/cinematic.css">
-<main class=auth-shell>
-  <section class=cinema-auth>
-    <canvas data-creator-universe aria-hidden=true></canvas>
-    <div class=scan-beam></div>
-    <div class=cinema-grid></div>
-    <div class=auth-brand>
-      <a href=/ class=brand-link>
-        <span class=brand-mark
+<link rel="stylesheet" href="/assets/cinematic-login.css">
+<%- include('partials/cinematic-auth', { mode: 'login' }) %>
+<script src="/assets/cinematic-login.js" defer></script>
+<%- include('partials/footer') %>
