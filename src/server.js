@@ -67,7 +67,10 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/assets', express.static(path.join(config.rootDir, 'public'), {
   maxAge: 0,
   cacheControl: false,
-  etag: true
+  etag: true,
+  setHeaders: res => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+  }
 }));
 
 app.use((req, _res, next) => {
