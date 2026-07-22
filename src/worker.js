@@ -9,6 +9,7 @@ import { absoluteStoragePath, pruneUserScreenshots, userScreenshotDir } from './
 import { uploadToYouTube, YouTubeAutomationError } from './services/youtube.js';
 import { startYouTubeLogin } from './services/login-manager.js';
 import { assessDuplicateRisk } from './services/duplicate-risk.js';
+import { checkYouTubeSession } from './services/session-health.js';
 
 let stopping = false;
 let activeWorkers = 0;
@@ -111,10 +112,31 @@ async function processUpload(post) {
     const publishLocal = post.youtube_publish_at ? DateTime.fromJSDate(new Date(post.youtube_publish_at)).setZone(post.timezone) : null;
     post.youtube_publish_local_date = publishLocal?.toFormat('yyyy-MM-dd') || '';
     post.youtube_publish_local_time = publishLocal?.toFormat('HH:mm') || '';
+    const channelId = post.browser_profile_id || post.channel_id;
     const onStage = async workflowStage => {
       post.workflow_stage = workflowStage;
       await query(`UPDATE uploads SET workflow_stage=$2,updated_at=NOW() WHERE id=$1`, [post.id,workflowStage]);
     };
+    await onStage('BEFORE_STUDIO_OPEN');
+    log('info','Checking YouTube Studio session before upload.',{ channelId });
+    const sessionHealth = await checkYouTubeSession({ userId:post.user_id, channelId, timezone:post.timezone, screenshotPath });
+    if (sessionHealth.status !== 'HEALTHY') {
+      const message = sessionHealth.status === 'LOGIN_REQUIRED'
+        ? 'YouTube login is required. Open the secure YouTube Studio browser and sign in again.'
+        : sessionHealth.status === 'VERIFICATION_REQUIRED'
+          ? 'Google is requesting manual verification. Open the secure YouTube Studio browser, complete verification yourself, save the session, then resume the upload.'
+          : sessionHealth.status === 'BROWSER_PROFILE_LOCKED'
+            ? 'Channel browser is currently in use. Finish the active secure browser session before uploading.'
+            : sessionHealth.status === 'STUDIO_UNAVAILABLE'
+              ? 'YouTube Studio is unavailable or returned an error. Try again after YouTube Studio is reachable.'
+              : 'YouTube Studio session health could not be confirmed. Check the secure browser before retrying.';
+      const code = sessionHealth.status === 'LOGIN_REQUIRED' ? 'YOUTUBE_LOGIN_REQUIRED'
+        : sessionHealth.status === 'VERIFICATION_REQUIRED' ? 'GOOGLE_VERIFICATION_REQUIRED'
+        : sessionHealth.status === 'BROWSER_PROFILE_LOCKED' ? 'BROWSER_PROFILE_LOCKED'
+        : sessionHealth.status === 'STUDIO_UNAVAILABLE' ? 'YOUTUBE_STUDIO_UNAVAILABLE'
+        : 'YOUTUBE_SESSION_EXPIRED';
+      throw new YouTubeAutomationError(message, code, { retryable:false });
+    }
     log('info',`Starting ${post.content_type === 'SHORT' ? 'Short' : 'video'} upload.`,{ media:post.media_name });
     const result = await uploadToYouTube({ post,storageState:state,videoPath:mediaPath,thumbnailPath,captionPath,screenshotPath,log,onStage });
     await withTransaction(async client => {
@@ -136,7 +158,7 @@ async function processUpload(post) {
     const risk = assessDuplicateRisk(post);
     const status = ['LOGIN_REQUIRED','YOUTUBE_LOGIN_REQUIRED'].includes(code) ? 'LOGIN_REQUIRED'
       : ['ACCOUNT_ACTION_REQUIRED','GOOGLE_VERIFICATION_REQUIRED'].includes(code) ? (risk.reviewRequired ? 'REVIEW_REQUIRED' : 'PAUSED_FOR_VERIFICATION')
-      : code === 'BROWSER_PROFILE_LOCKED' ? 'READY'
+      : code === 'BROWSER_PROFILE_LOCKED' ? 'PAUSED_FOR_VERIFICATION'
       : code === 'REVIEW_REQUIRED' || error?.outcomeUncertain ? 'REVIEW_REQUIRED'
       : post.attempts >= post.max_attempts ? 'FAILED' : 'READY';
     await query(`UPDATE uploads SET status=$2,error=$3,duplicate_risk=$4,updated_at=NOW() WHERE id=$1`,[post.id,status,String(error.message || 'Upload failed.').slice(0,2000),risk.risk]);
