@@ -24,7 +24,7 @@
   </section>
 
   <div class="form-grid form-grid-3">
-    <label><span>Upload ID</span><input name="uploadId" required maxlength="100" pattern="[A-Za-z0-9._-]+" value="<%= f.upload_id || '' %>" placeholder="YT-2026-001"></label>
+    <label><span>Upload ID</span><input name="uploadId" required maxlength="100" pattern="[A-Za-z0-9._\-]+" value="<%= f.upload_id || '' %>" placeholder="YT-2026-001"></label>
     <label><span>Source video</span><select name="mediaId" required><option value="">Choose uploaded video</option><% videos.forEach(file => { %><option value="<%= file.id %>" <%= select(f.media_id,file.id) %>><%= file.original_name %></option><% }) %></select></label>
     <label><span>Playlist</span><input name="playlistName" maxlength="150" value="<%= f.playlist_name || '' %>" placeholder="Optional exact playlist name"></label>
     <label class="span-2"><span>Title</span><input name="title" required maxlength="100" value="<%= f.title || '' %>" placeholder="A strong, clear title"><small><b data-title-count>0</b>/100</small></label>
