@@ -102,16 +102,43 @@ async function hasAccountVerification(page) {
   return ACCOUNT_VERIFICATION_PATTERN.test(body);
 }
 
+async function clickAccountVerificationButton(page) {
+  return page.evaluate(() => {
+    const buttonPattern = /^(next|verify now|continue|yes,?\s*it'?s me)$/i;
+    const verificationPattern = /verify it'?s you|verify it’s you|confirm it'?s really you|confirm your identity/i;
+    const isVisible = el => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    };
+    const isEnabled = el => !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.hasAttribute('disabled');
+    const roots = Array.from(document.querySelectorAll('[role="dialog"], ytcp-dialog, tp-yt-paper-dialog, div'))
+      .filter(el => isVisible(el) && verificationPattern.test(el.innerText || ''))
+      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+    for (const root of roots) {
+      const buttons = Array.from(root.querySelectorAll('button, [role="button"]'))
+        .filter(el => isVisible(el) && isEnabled(el));
+      const target = buttons.find(el => buttonPattern.test((el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim()));
+      if (target) {
+        target.click();
+        return (target.innerText || target.textContent || target.getAttribute('aria-label') || 'verification button').trim();
+      }
+    }
+    return '';
+  }).catch(() => '');
+}
+
 async function waitForManualAccountApproval(page, log = () => {}, captureVerificationScreenshot = async () => '') {
   if (!(await hasAccountVerification(page))) return false;
-  await clickCandidates([
-    page.locator('[role="dialog"]').getByRole('button', { name:/^next$/i }),
-    page.getByRole('button', { name:/^next$/i }),
-    page.getByText(/^next$/i),
-    page.getByRole('button', { name:/verify now|continue|yes,? it'?s me/i }),
-    page.locator('button,[role="button"]').filter({ hasText:/verify now|continue|yes,? it'?s me/i })
-  ], 5000);
-  await sleep(2500);
+  const clickStarted = Date.now();
+  let clickedButton = '';
+  while (!clickedButton && Date.now() - clickStarted < 30_000) {
+    clickedButton = await clickAccountVerificationButton(page);
+    if (clickedButton) break;
+    await sleep(1000);
+  }
+  if (clickedButton) log('info', `Clicked Google verification ${clickedButton} button.`);
+  await sleep(5000);
   const screenshot = await captureVerificationScreenshot().catch(() => '');
   if (screenshot) {
     log('warning', 'Google verification challenge screenshot captured.', { screenshot });
