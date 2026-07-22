@@ -6,15 +6,15 @@
     <section class="connect-card">
       <div class="connect-copy">
         <p class="eyebrow">One-time secure connection</p>
-        <h1>Verify YouTube Studio in the remote browser.</h1>
+        <h1>Open YouTube Studio in the remote browser.</h1>
         <p>The remote browser runs on the backend server. Enter Google credentials only inside YouTube or Google pages. YouTubePilot saves encrypted browser session state, not your password.</p>
         <ol>
           <li>Open the remote studio.</li>
-          <li>Complete Google login, OTP, CAPTCHA, channel selection, and any "Verify it is you" prompt.</li>
-          <li>Confirm the YouTube Studio dashboard is usable and no security dialog is covering it.</li>
-          <li>Return here and save the encrypted connection.</li>
+          <li>The backend browser opens <strong>studio.youtube.com</strong> directly.</li>
+          <li>Complete any Google login, OTP, CAPTCHA, channel selection, or verification prompt shown there.</li>
+          <li>Return here and save the encrypted browser session whenever you are ready.</li>
         </ol>
-        <div class="warning-box">Saving is blocked until Google security verification is cleared. The connection window expires at <strong><%= new Date(session.expiresAt).toLocaleTimeString() %></strong>.</div>
+        <div class="warning-box">Saving stores the current remote browser session exactly as it is. The connection window expires at <strong><%= new Date(session.expiresAt).toLocaleTimeString() %></strong>.</div>
       </div>
       <div class="connect-actions">
         <a class="btn btn-primary btn-xl" href="<%= session.remoteUrl %>" target="_blank" rel="noopener">Open remote YouTube Studio</a>

@@ -243,17 +243,14 @@ export async function startYouTubeLogin(userId) {
 export async function completeYouTubeLogin(userId) {
   if (!activeSession || activeSession.userId !== userId) throw new Error('No active YouTube connection window was found for this account.');
   const { page, context } = activeSession;
-  await assertStudioReadyForAutomation(userId,page);
   const state = await context.storageState({ indexedDB:true }).catch(() => context.storageState());
-  const hasGoogleSession = state.cookies?.some(cookie => ['SID','SAPISID','__Secure-3PSID','LOGIN_INFO'].includes(cookie.name));
-  if (!hasGoogleSession) throw new Error('The Google/YouTube session cookie was not detected. Complete login before saving the connection.');
   const channelName = (await page.locator('#channel-name, ytcp-channel-name').first().innerText().catch(() => '')).trim().slice(0,150);
   const encrypted = encryptJson(state);
   await query(
     `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,channel_name=$3,connected_at=NOW(),last_checked_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
     [userId,encrypted,channelName]
   );
-  await addLog(userId,'success','YouTube channel connected securely.',{ channelName });
+  await addLog(userId,'success','YouTube browser session saved securely.',{ channelName,currentUrl:page.url() });
   await closeActive('completed');
 }
 
