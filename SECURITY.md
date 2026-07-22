@@ -5,6 +5,7 @@
 - Every state-changing request uses a per-session CSRF token, including multipart uploads.
 - Authentication and upload endpoints are rate limited.
 - Google credentials are entered only in the remote Google/YouTube browser. They are never accepted by an application form.
+- The visible noVNC login window runs normal Chrome Stable with the channel's persistent profile and is not controlled by Playwright; the Save button records the user's explicit confirmation, while later backend health checks verify whether Studio is actually usable.
 - Each YouTube channel uses one long-lived Chromium profile under persistent storage. Playwright storage state is encrypted with AES-256-GCM only as an emergency backup; the persistent browser profile is the primary session mechanism.
 - Remote YouTube Studio access is launched through authenticated application routes. The noVNC websocket token is stored in a private temporary token file and rotated each time the owner opens the secure browser route, so previously copied raw noVNC URLs stop reconnecting after a new launch is issued.
 - Customer files use randomized server names, MIME-signature checks, private filesystem permissions and account-scoped database lookups.

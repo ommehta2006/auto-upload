@@ -12,8 +12,12 @@ const required = [
 for (const file of required) {
   if (!fs.existsSync(path.join(root,file))) throw new Error(`Required project file is missing: ${file}`);
 }
-function walk(directory) {
-  return fs.readdirSync(directory,{ withFileTypes:true }).flatMap(entry => entry.isDirectory() ? walk(path.join(directory,entry.name)) : [path.join(directory,entry.name)]);
+const ignoredRootDirs = new Set(['.git','node_modules','storage','tmp','artifacts','runtime']);
+function walk(directory, options = {}) {
+  return fs.readdirSync(directory,{ withFileTypes:true }).flatMap(entry => {
+    if (entry.isDirectory() && options.skipRootRuntime && directory === root && ignoredRootDirs.has(entry.name)) return [];
+    return entry.isDirectory() ? walk(path.join(directory,entry.name), options) : [path.join(directory,entry.name)];
+  });
 }
 for (const file of [...walk(path.join(root,'src')),...walk(path.join(root,'public')),...walk(path.join(root,'deploy')),...walk(path.join(root,'scripts'))]) {
   if (/\.(?:js|mjs)$/.test(file)) execFileSync(process.execPath,['--check',file],{ stdio:'pipe' });
@@ -21,7 +25,7 @@ for (const file of [...walk(path.join(root,'src')),...walk(path.join(root,'publi
 for (const file of walk(path.join(root,'views')).filter(file => file.endsWith('.ejs'))) {
   ejs.compile(fs.readFileSync(file,'utf8'),{ filename:file });
 }
-const forbidden = walk(root).filter(file => /instagram/i.test(path.basename(file)) || /browser-profile|storage-state\.json/i.test(file));
+const forbidden = walk(root, { skipRootRuntime:true }).filter(file => /instagram/i.test(path.basename(file)) || /browser-profile|storage-state\.json/i.test(file));
 if (forbidden.length) throw new Error(`Forbidden legacy or session files found: ${forbidden.join(', ')}`);
 const schema = fs.readFileSync(path.join(root,'db/schema.sql'),'utf8');
 for (const table of ['users','youtube_accounts','media_files','uploads','activity_logs','user_sessions']) {

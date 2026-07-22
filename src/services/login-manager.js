@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import net from 'node:net';
 import { config } from '../config.js';
 import { query } from '../db.js';
-import { decryptJson, encryptJson, randomToken } from './crypto.js';
+import { randomToken } from './crypto.js';
 import { addLog } from './logs.js';
-import { acquireBrowserLock, archiveChannelProfile, ensureChannelProfile, launchYouTubePersistentContext, seedPersistentProfileFromStorageState } from './persistent-browser.js';
+import { acquireBrowserLock, archiveChannelProfile, ensureChannelProfile, recoverStaleChromiumProfileLock } from './persistent-browser.js';
 
 let activeSession = null;
 const SECURITY_CHALLENGE_PATTERN = /verify it'?s you|verify it’s you|confirm your identity|suspicious activity|to continue, we need to confirm|check your phone|enter the code|two-step verification|couldn'?t sign you in/i;
@@ -52,7 +52,7 @@ async function closeActive(reason = 'closed') {
   const session = activeSession;
   activeSession = null;
   clearTimeout(session.timeout);
-  await session.context?.close().catch(() => {});
+  stopProcess(session.browserProcess);
   await session.browserLock?.release().catch(() => {});
   stopProcess(session.websockify);
   stopProcess(session.x11vnc);
@@ -98,102 +98,65 @@ function writeRemoteToken(session, accessToken) {
   session.remoteUrlIssuedAt = new Date();
 }
 
-async function startSigninBrowser({ userId, channelId, existingState, timezone }) {
+function visibleBrowserExecutable() {
+  const candidates = [
+    process.env.VISIBLE_CHROME_PATH,
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+  ].filter(Boolean);
+  const found = candidates.find(candidate => fs.existsSync(candidate));
+  if (!found) {
+    const error = new Error('A normal Chrome browser is not installed for the secure login window.');
+    error.code = 'BROWSER_LAUNCH_FAILED';
+    throw error;
+  }
+  return found;
+}
+
+async function startSigninBrowser({ userId, channelId, timezone }) {
   const profileDir = await ensureChannelProfile(userId, channelId);
-  const { context } = await launchYouTubePersistentContext({
+  await recoverStaleChromiumProfileLock({
     userId,
     channelId,
     mode:'VERIFICATION',
-    headless:false,
-    timezoneId:timezone || 'Asia/Kolkata'
+    profileDir
   });
-  await seedPersistentProfileFromStorageState(profileDir, context, existingState);
-  const page = context.pages()[0] || await context.newPage();
-  return { context, page, profileDir };
-}
-
-async function studioLooksAuthenticated(page) {
-  if (await studioHasSecurityChallenge(page)) return false;
-  const url = page.url().toLowerCase();
-  if (url.includes('accounts.google.com') || url.includes('servicelogin')) return false;
-  const signIn = await page.getByText(/sign in/i, { exact: true }).first().isVisible().catch(() => false);
-  if (signIn) return false;
-  const studioUrl = url.includes('studio.youtube.com');
-  const body = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
-  if (studioUrl && STUDIO_DASHBOARD_PATTERN.test(body)) return true;
-  const dashboardSignal = await page.locator('#avatar-btn, ytcp-button#create-icon, #create-icon, ytcp-channel-name, #channel-name').first().isVisible({ timeout: 2500 }).catch(() => false)
-    || await page.getByRole('button', { name:/create/i }).first().isVisible({ timeout: 1000 }).catch(() => false)
-    || await page.getByText(/^create$/i).first().isVisible({ timeout: 1000 }).catch(() => false)
-    || await page.getByText(/upload videos?/i).first().isVisible({ timeout: 1000 }).catch(() => false)
-    || await page.getByText(/^content$/i).first().isVisible({ timeout: 1000 }).catch(() => false);
-  return Boolean(studioUrl && dashboardSignal);
-}
-
-async function studioHasSecurityChallenge(page) {
-  const url = page.url().toLowerCase();
-  if (url.includes('accounts.google.com') || url.includes('servicelogin')) {
-    const body = await page.locator('body').innerText({ timeout: 1500 }).catch(() => '');
-    return SECURITY_CHALLENGE_PATTERN.test(body);
-  }
-  const challengeText = page.getByText(SECURITY_CHALLENGE_PATTERN).first();
-  if (await challengeText.isVisible({ timeout: 800 }).catch(() => false)) return true;
-  const dialogs = page.locator('[role="dialog"], ytcp-dialog, tp-yt-paper-dialog');
-  const count = Math.min(await dialogs.count().catch(() => 0), 4);
-  for (let i = 0; i < count; i += 1) {
-    const dialog = dialogs.nth(i);
-    if (!(await dialog.isVisible({ timeout: 250 }).catch(() => false))) continue;
-    const text = await dialog.innerText({ timeout: 800 }).catch(() => '');
-    if (SECURITY_CHALLENGE_PATTERN.test(text)) return true;
-  }
-  return false;
-}
-
-async function dismissConnectionInterstitials(page) {
-  const skipStudio = page.getByText(/^skip to youtube studio$/i).first();
-  if (await skipStudio.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await skipStudio.click({ timeout: 2000 }).catch(() => {});
-    await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
-  }
-  const labels = [/^got it$/i,/^not now$/i,/^no thanks$/i,/^dismiss$/i,/^close$/i];
-  for (const label of labels) {
-    const button = page.getByRole('button', { name: label }).first();
-    if (await button.isVisible({ timeout: 500 }).catch(() => false)) await button.click({ timeout: 1500 }).catch(() => {});
-  }
-}
-
-async function recoverStudioOops(page) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const body = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
-    if (!/oops,\s*something went wrong/i.test(body)) return;
-    const retry = page.getByRole('button', { name:/^retry$/i }).first();
-    if (await retry.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await retry.click({ timeout: 2000 }).catch(() => {});
-    } else {
-      await page.reload({ waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
+  const browserProcess = spawn(visibleBrowserExecutable(), [
+    `--user-data-dir=${profileDir}`,
+    `--window-size=1440,900`,
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--password-store=basic',
+    '--use-mock-keychain',
+    '--disable-features=Translate',
+    '--disable-notifications',
+    config.youtubeStudioUrl
+  ], {
+    env:{ ...process.env, DISPLAY:config.display, TZ:timezone || 'Asia/Kolkata' },
+    stdio:['ignore','ignore','pipe']
+  });
+  browserProcess.stderr?.on('data', data => console.error(`[secure-browser] ${String(data).trim()}`));
+  browserProcess.once('exit', (code, signal) => {
+    if (activeSession?.browserProcess === browserProcess) {
+      void addLog(userId, 'warning', 'Secure browser process exited before the connection was saved.', {
+        channelId,
+        code,
+        signal,
+        event:'verification_browser_exited'
+      }).catch(() => {});
     }
-    await new Promise(resolve => setTimeout(resolve, 3000));
-  }
-}
-
-async function assertStudioReadyForAutomation(userId, page) {
-  if (!page.url().toLowerCase().includes('studio.youtube.com')) {
-    await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs }).catch(() => {});
-  }
-  const started = Date.now();
-  while (Date.now() - started < 45_000) {
-    await recoverStudioOops(page);
-    await dismissConnectionInterstitials(page);
-    if (await studioHasSecurityChallenge(page)) {
-      const message = 'Google is still showing "Verify it is you" inside YouTube Studio. Complete that security step in the remote browser before saving the connection.';
-      await query(`UPDATE youtube_accounts SET status='ATTENTION_REQUIRED',last_error=$2,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[userId,message]).catch(() => {});
-      await addLog(userId,'warning','YouTube Studio verification is still pending during connection.',{ reason:'google_security_challenge' });
-      throw new Error(message);
-    }
-    if (await studioLooksAuthenticated(page)) return;
-    await new Promise(resolve => setTimeout(resolve, 1500));
-  }
-  const body = await page.locator('body').innerText({ timeout: 1500 }).catch(() => '');
-  throw new Error(`A completed YouTube Studio login was not detected. Current page: ${page.url()}. Visible text: ${body.slice(0, 220).replace(/\s+/g, ' ')}`);
+  });
+  await addLog(userId, 'info', 'Normal Chrome secure browser opened for YouTube Studio login.', {
+    channelId,
+    browserMode:'VERIFICATION',
+    event:'verification_browser_opened'
+  }).catch(() => {});
+  return { browserProcess, profileDir };
 }
 
 export async function startYouTubeLogin(userId) {
@@ -208,17 +171,12 @@ export async function startYouTubeLogin(userId) {
   );
   const account = accountResult.rows[0];
   const channelId = account.browser_profile_id || account.id;
-  let remote; let context; let signin; let browserLock;
+  let remote; let signin; let browserLock;
   try {
-    const existingState = account.encrypted_state ? decryptJson(account.encrypted_state) : undefined;
     browserLock = await acquireBrowserLock({ userId, channelId, owner:'VERIFICATION', metadata:{ reason:'youtube_login' } });
     const accessToken = randomToken(18);
     remote = await startRemoteDesktop(accessToken);
-    signin = await startSigninBrowser({ userId, channelId, existingState });
-    ({ context } = signin);
-    const { page } = signin;
-    await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
-    await recoverStudioOops(page);
+    signin = await startSigninBrowser({ userId, channelId });
     const expiresAt = new Date(Date.now() + config.loginSessionMinutes * 60_000);
     const url = remoteUrl(accessToken);
     const timeout = setTimeout(async () => {
@@ -226,11 +184,11 @@ export async function startYouTubeLogin(userId) {
       await closeActive('expired');
     }, config.loginSessionMinutes * 60_000);
     timeout.unref();
-    activeSession = { userId, accountId:account.id, channelId, browserLock, context, page, profileDir:signin.profileDir, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
+    activeSession = { userId, accountId:account.id, channelId, browserLock, browserProcess:signin.browserProcess, profileDir:signin.profileDir, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
     await addLog(userId,'info','YouTube connection window opened.',{ channelId, expiresAt, event:'verification_session_started' });
     return { remoteUrl:remoteEntryUrl(), expiresAt, alreadyActive:false };
   } catch (error) {
-    await context?.close().catch(() => {});
+    stopProcess(signin?.browserProcess);
     await browserLock?.release().catch(() => {});
     stopProcess(remote?.websockify); stopProcess(remote?.x11vnc);
     if (remote?.tokenFile) await fs.promises.rm(remote.tokenFile,{ force:true }).catch(() => {});
@@ -254,15 +212,11 @@ export function issueRemoteBrowserUrl(userId) {
 
 export async function completeYouTubeLogin(userId) {
   if (!activeSession || activeSession.userId !== userId) throw new Error('No active YouTube connection window was found for this account.');
-  const { page, context, channelId } = activeSession;
-  await assertStudioReadyForAutomation(userId, page);
-  const state = await context.storageState({ indexedDB:true }).catch(() => context.storageState());
-  const channelName = (await page.locator('#channel-name, ytcp-channel-name').first().innerText().catch(() => '')).trim().slice(0,150);
-  const encrypted = encryptJson(state);
+  const { channelId } = activeSession;
   await query(
-    `UPDATE youtube_accounts SET status='CONNECTED',encrypted_state=$2,channel_name=$3,browser_profile_id=COALESCE(NULLIF(browser_profile_id,''),id::text),
-       browser_profile_health='HEALTHY',connected_at=NOW(),last_checked_at=NOW(),last_successful_verification_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
-    [userId,encrypted,channelName]
+    `UPDATE youtube_accounts SET status='CONNECTED',browser_profile_id=COALESCE(NULLIF(browser_profile_id,''),id::text),
+       browser_profile_health='SAVED_BY_USER',connected_at=NOW(),last_checked_at=NOW(),last_successful_verification_at=NOW(),last_error=NULL,updated_at=NOW() WHERE user_id=$1`,
+    [userId]
   );
   const resumed = await query(
     `UPDATE uploads
@@ -276,8 +230,8 @@ export async function completeYouTubeLogin(userId) {
   );
   await addLog(userId,'success','YouTube browser session saved securely.',{
     channelId,
-    channelName,
-    currentUrl:page.url(),
+    channelName:'',
+    currentUrl:config.youtubeStudioUrl,
     resumedUploads:resumed.rows.map(row => row.upload_id),
     event:'verification_completed'
   });
