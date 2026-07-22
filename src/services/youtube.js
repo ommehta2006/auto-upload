@@ -495,6 +495,7 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     await reachVisibility(page);
     await setVisibility(page,post);
     await onStage('VISIBILITY_SELECTED');
+    await onStage('SAVE_OR_PUBLISH_CLICKED');
     const result = await finalize(page,post);
     await onStage('COMPLETION_CONFIRMED');
     post.youtube_video_id = result.videoId;

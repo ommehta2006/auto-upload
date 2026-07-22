@@ -8,6 +8,7 @@ import { addLog } from './services/logs.js';
 import { absoluteStoragePath, pruneUserScreenshots, userScreenshotDir } from './services/storage.js';
 import { uploadToYouTube, YouTubeAutomationError } from './services/youtube.js';
 import { startYouTubeLogin } from './services/login-manager.js';
+import { assessDuplicateRisk } from './services/duplicate-risk.js';
 
 let stopping = false;
 let activeWorkers = 0;
@@ -111,6 +112,7 @@ async function processUpload(post) {
     post.youtube_publish_local_date = publishLocal?.toFormat('yyyy-MM-dd') || '';
     post.youtube_publish_local_time = publishLocal?.toFormat('HH:mm') || '';
     const onStage = async workflowStage => {
+      post.workflow_stage = workflowStage;
       await query(`UPDATE uploads SET workflow_stage=$2,updated_at=NOW() WHERE id=$1`, [post.id,workflowStage]);
     };
     log('info',`Starting ${post.content_type === 'SHORT' ? 'Short' : 'video'} upload.`,{ media:post.media_name });
@@ -131,11 +133,13 @@ async function processUpload(post) {
     });
   } catch (error) {
     const code = error instanceof YouTubeAutomationError ? error.code : 'AUTOMATION_FAILED';
+    const risk = assessDuplicateRisk(post);
     const status = ['LOGIN_REQUIRED','YOUTUBE_LOGIN_REQUIRED'].includes(code) ? 'LOGIN_REQUIRED'
-      : ['ACCOUNT_ACTION_REQUIRED','GOOGLE_VERIFICATION_REQUIRED'].includes(code) ? 'PAUSED_FOR_VERIFICATION'
+      : ['ACCOUNT_ACTION_REQUIRED','GOOGLE_VERIFICATION_REQUIRED'].includes(code) ? (risk.reviewRequired ? 'REVIEW_REQUIRED' : 'PAUSED_FOR_VERIFICATION')
       : code === 'REVIEW_REQUIRED' || error?.outcomeUncertain ? 'REVIEW_REQUIRED'
       : post.attempts >= post.max_attempts ? 'FAILED' : 'READY';
-    await query(`UPDATE uploads SET status=$2,error=$3,updated_at=NOW() WHERE id=$1`,[post.id,status,String(error.message || 'Upload failed.').slice(0,2000)]);
+    await query(`UPDATE uploads SET status=$2,error=$3,duplicate_risk=$4,updated_at=NOW() WHERE id=$1`,[post.id,status,String(error.message || 'Upload failed.').slice(0,2000),risk.risk]);
+    await addLog(post.user_id,'info','Duplicate risk check completed.',{ uploadId:post.upload_id,workflowStage:post.workflow_stage,status:risk.risk,event:'duplicate_check_completed' });
     if (['LOGIN_REQUIRED','PAUSED_FOR_VERIFICATION'].includes(status)) {
       const accountStatus = status === 'LOGIN_REQUIRED' ? 'SESSION_EXPIRED' : 'VERIFICATION_REQUIRED';
       await query(`UPDATE youtube_accounts SET status=$2,browser_profile_health=$3,last_error=$4,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[post.user_id,accountStatus,status,String(error.message).slice(0,1000)]);

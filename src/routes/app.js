@@ -17,6 +17,7 @@ import { parseUploadsWorkbook, buildUploadsWorkbook } from '../services/excel.js
 import { addLog } from '../services/logs.js';
 import { startYouTubeLogin, restartYouTubeLogin, completeYouTubeLogin, cancelYouTubeLogin, disconnectYouTube, loginSessionStatus } from '../services/login-manager.js';
 import { checkYouTubeSession } from '../services/session-health.js';
+import { assessDuplicateRisk } from '../services/duplicate-risk.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -317,7 +318,7 @@ router.post('/app/uploads/:id/edit',async (req,res,next) => {
 router.post('/app/uploads/:id/retry',async (req,res,next) => {
   try {
     const current = await query(
-      `SELECT u.status,a.status AS account_status
+      `SELECT u.*,a.status AS account_status
          FROM uploads u
          LEFT JOIN youtube_accounts a ON a.user_id=u.user_id
         WHERE u.id=$1 AND u.user_id=$2`,
@@ -328,9 +329,62 @@ router.post('/app/uploads/:id/retry',async (req,res,next) => {
       flash(req,'error','Complete YouTube Studio verification and save the channel connection before retrying this upload.');
       return res.redirect('/app#channel');
     }
-    const result = await query(`UPDATE uploads SET status='READY',error='',enabled=TRUE,attempts=0,last_attempt_at=NULL,warnings='[]'::jsonb,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status<>'UPLOADED' RETURNING upload_id`,[req.params.id,req.session.userId]);
+    const risk = assessDuplicateRisk(current.rows[0]);
+    await addLog(req.session.userId,'info','Duplicate risk check completed.',{ uploadId:current.rows[0].upload_id,workflowStage:current.rows[0].workflow_stage,status:risk.risk,event:'duplicate_check_completed' });
+    if (risk.reviewRequired) {
+      await query(`UPDATE uploads SET status='REVIEW_REQUIRED',duplicate_risk=$3,error=$4,updated_at=NOW() WHERE id=$1 AND user_id=$2`,[req.params.id,req.session.userId,risk.risk,risk.reason]);
+      flash(req,'error',`Upload needs review before retry: ${risk.reason}`);
+      return res.redirect('/app#queue');
+    }
+    if (risk.risk !== 'NONE' && req.body.confirmDuplicateRisk !== 'true') {
+      flash(req,'error',`Duplicate risk is ${risk.risk}. Confirm resume from the queue before retrying.`);
+      return res.redirect('/app#queue');
+    }
+    const result = await query(`UPDATE uploads SET status='READY',error='',enabled=TRUE,attempts=0,last_attempt_at=NULL,warnings='[]'::jsonb,duplicate_risk=$3,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status<>'UPLOADED' RETURNING upload_id`,[req.params.id,req.session.userId,risk.risk]);
     if (!result.rowCount) throw new Error('The upload could not be retried. Completed uploads are immutable.');
     flash(req,'success','Upload moved back to READY.'); res.redirect('/app#queue');
+  } catch (error) { next(error); }
+});
+
+router.post('/app/uploads/:id/resume',async (req,res,next) => {
+  try {
+    const current = await query(
+      `SELECT u.*,a.status AS account_status
+         FROM uploads u
+         LEFT JOIN youtube_accounts a ON a.user_id=u.user_id
+        WHERE u.id=$1 AND u.user_id=$2`,
+      [req.params.id,req.session.userId]
+    );
+    if (!current.rowCount) throw new Error('The upload could not be resumed.');
+    if (current.rows[0].account_status !== 'CONNECTED') {
+      flash(req,'error','Complete and save the YouTube verification session before resuming this upload.');
+      return res.redirect('/app#channel');
+    }
+    const risk = assessDuplicateRisk(current.rows[0]);
+    await addLog(req.session.userId,'info','Duplicate risk check completed.',{ uploadId:current.rows[0].upload_id,workflowStage:current.rows[0].workflow_stage,status:risk.risk,event:'duplicate_check_completed' });
+    if (risk.reviewRequired) {
+      await query(`UPDATE uploads SET status='REVIEW_REQUIRED',duplicate_risk=$3,error=$4,updated_at=NOW() WHERE id=$1 AND user_id=$2`,[req.params.id,req.session.userId,risk.risk,risk.reason]);
+      flash(req,'error',`Upload needs review before resume: ${risk.reason}`);
+      return res.redirect('/app#queue');
+    }
+    if (risk.risk !== 'NONE' && req.body.confirmDuplicateRisk !== 'true') {
+      flash(req,'error',`Duplicate risk is ${risk.risk}. Use the confirmed resume action.`);
+      return res.redirect('/app#queue');
+    }
+    const result = await query(`UPDATE uploads SET status='READY',enabled=TRUE,error='',attempts=0,last_attempt_at=NULL,warnings='[]'::jsonb,duplicate_risk=$3,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status IN ('RESUME_AVAILABLE','PAUSED_FOR_VERIFICATION','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED') RETURNING upload_id`,[req.params.id,req.session.userId,risk.risk]);
+    if (!result.rowCount) throw new Error('Only paused or resumable uploads can be resumed.');
+    flash(req,'success','Upload resumed and moved to READY.');
+    res.redirect('/app#queue');
+  } catch (error) { next(error); }
+});
+
+router.post('/app/uploads/:id/cancel',async (req,res,next) => {
+  try {
+    const result = await query(`UPDATE uploads SET status='PAUSED',enabled=FALSE,error='Upload cancelled by user.',updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status<>'UPLOADED' RETURNING upload_id`,[req.params.id,req.session.userId]);
+    if (!result.rowCount) throw new Error('The upload could not be cancelled.');
+    await addLog(req.session.userId,'warning','Upload cancelled by user.',{ uploadId:result.rows[0].upload_id });
+    flash(req,'success','Upload cancelled.');
+    res.redirect('/app#queue');
   } catch (error) { next(error); }
 });
 

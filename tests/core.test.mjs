@@ -9,6 +9,7 @@ import { validateContentType } from '../src/services/media-probe.js';
 import { uploadSchema } from '../src/validation.js';
 import { parseUploadsWorkbook } from '../src/services/excel.js';
 import { browserProfileDir, ensureChannelProfile } from '../src/services/persistent-browser.js';
+import { assessDuplicateRisk } from '../src/services/duplicate-risk.js';
 
 process.env.SESSION_ENCRYPTION_KEY = Buffer.alloc(32,7).toString('base64');
 
@@ -71,4 +72,15 @@ test('persistent browser profile directory is created with private permissions',
   const stat = await fs.stat(directory);
   assert.equal(stat.isDirectory(), true);
   if (process.platform !== 'win32') assert.equal(stat.mode & 0o777, 0o700);
+});
+
+test('duplicate risk follows interrupted upload stage', () => {
+  assert.deepEqual(assessDuplicateRisk({ workflow_stage:'BEFORE_FILE_SELECTION' }), {
+    risk:'NONE',
+    reviewRequired:false,
+    reason:'Upload stopped before file selection.'
+  });
+  assert.equal(assessDuplicateRisk({ workflow_stage:'FILE_SELECTED' }).risk, 'POSSIBLE');
+  assert.equal(assessDuplicateRisk({ workflow_stage:'SAVE_OR_PUBLISH_CLICKED' }).reviewRequired, true);
+  assert.equal(assessDuplicateRisk({ workflow_stage:'COMPLETION_CONFIRMED', youtube_url:'https://youtu.be/testid' }).risk, 'HIGH');
 });
