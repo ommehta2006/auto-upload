@@ -14,6 +14,7 @@ export class YouTubeAutomationError extends Error {
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const YOUTUBE_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
 
 async function visible(locator, timeout = 1200) {
   return locator?.first().isVisible({ timeout }).catch(() => false);
@@ -49,6 +50,22 @@ async function fillCandidates(candidates, value, timeout = 3000) {
 }
 
 async function dismissObstructions(page, log = () => {}) {
+  const studioSkip = [
+    page.getByRole('link', { name:/skip to youtube studio/i }),
+    page.getByText(/^skip to youtube studio$/i),
+    page.locator('a,button,tp-yt-paper-button,ytcp-button,paper-button').filter({ hasText:/skip to youtube studio/i })
+  ];
+  for (const candidate of studioSkip) {
+    if (await visible(candidate, 500)) {
+      if (await candidate.first().click({ timeout: 1500 }).then(() => true).catch(() => false)) {
+        log('info', 'Skipped YouTube Studio unsupported-browser interstitial.');
+        await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
+        await sleep(2000);
+        return 1;
+      }
+    }
+  }
+
   const labels = [/^got it$/i,/^dismiss$/i,/^no thanks$/i,/^skip$/i,/^not now$/i,/^close$/i,/^okay$/i,/^understood$/i,/^maybe later$/i];
   let dismissed = 0;
   for (const label of labels) {
@@ -376,7 +393,10 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
       slowMo:config.slowMoMs,
       args:['--no-sandbox','--disable-dev-shm-usage','--disable-notifications','--no-first-run','--disable-features=Translate,MediaRouter','--window-size=1440,1000']
     });
-    context = await browser.newContext({ locale:'en-US', timezoneId:post.timezone || 'Asia/Kolkata', viewport:{ width:1440,height:1000 }, storageState, acceptDownloads:false });
+    context = await browser.newContext({ locale:'en-US', timezoneId:post.timezone || 'Asia/Kolkata', viewport:{ width:1440,height:1000 }, storageState, userAgent:YOUTUBE_USER_AGENT, acceptDownloads:false });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
     page = await context.newPage();
     page.on('dialog', dialog => dialog.dismiss().catch(() => {}));
     popupTimer = setInterval(() => void dismissObstructions(page,log).catch(() => {}),2000);
@@ -384,6 +404,7 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     await page.goto(config.youtubeStudioUrl,{ waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
     await assertLoggedIn(page);
     await dismissObstructions(page,log);
+    await assertLoggedIn(page);
     await openUploadDialog(page);
     await chooseVideoFile(page,videoPath);
     await waitForDetails(page);
