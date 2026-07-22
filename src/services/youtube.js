@@ -155,10 +155,16 @@ async function chooseVideoFile(page, videoPath) {
 }
 
 async function waitForDetails(page) {
-  await Promise.race([
-    page.locator('#title-textarea #textbox').waitFor({ state:'visible', timeout:60_000 }),
-    page.getByText(/^details$/i).waitFor({ state:'visible', timeout:60_000 })
-  ]).catch(() => { throw new YouTubeAutomationError('YouTube did not open the video details screen after selecting the file.'); });
+  const started = Date.now();
+  while (Date.now() - started < 90_000) {
+    await assertLoggedIn(page);
+    const ready = await visible(page.locator('#title-textarea #textbox'), 700)
+      || await visible(page.getByText(/^details$/i), 700)
+      || await visible(page.getByText(/is this video made for kids/i), 700);
+    if (ready) return;
+    await sleep(1200);
+  }
+  throw new YouTubeAutomationError('YouTube did not open the video details screen after selecting the file.');
 }
 
 async function setTextBox(page, kind, value, required = false) {
