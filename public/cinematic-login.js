@@ -8,11 +8,11 @@
   const controls = root.querySelector('[data-intro-controls]');
   const replayButton = root.querySelector('[data-replay-intro]');
   const shouldAutoplayIntro = root.dataset.introAutoplay === 'true';
-  const ictx = intro?.getContext('2d');
+  const ictx = intro?.getContext('2d') || null;
   const actx = ambient?.getContext('2d') || null;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if (!intro || !ictx) return;
+  if (!intro && !ambient) return;
 
   let width = 0;
   let height = 0;
@@ -37,7 +37,7 @@
       canvas.style.height = `${height}px`;
     });
 
-    ictx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ictx?.setTransform(dpr, 0, 0, dpr, 0, 0);
     actx?.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     stars = Array.from({ length: Math.min(360, Math.floor(width * height / 3200)) }, () => ({
@@ -82,6 +82,7 @@
   }
 
   function drawLine(x1, y1, x2, y2, color, lineWidth = 1, blur = 0) {
+    if (!ictx) return;
     ictx.beginPath();
     ictx.moveTo(x1, y1);
     ictx.lineTo(x2, y2);
@@ -94,6 +95,7 @@
   }
 
   function drawCore(scale, alpha, rotation) {
+    if (!ictx) return;
     ictx.save();
     ictx.translate(width / 2, height / 2);
     ictx.rotate(rotation);
@@ -127,6 +129,7 @@
   }
 
   function drawMetric(x, y, metricWidth, label, value, alpha, offset) {
+    if (!ictx) return;
     ictx.save();
     ictx.globalAlpha = alpha;
     ictx.translate(x + offset, y);
@@ -180,12 +183,13 @@
 
   function finishIntro() {
     finished = true;
-    intro.classList.add('is-hidden');
+    intro?.classList.add('is-hidden');
     if (controls) controls.style.display = 'none';
     if (introCopy) introCopy.style.opacity = 0;
   }
 
   function startIntro() {
+    if (!intro || !ictx) return;
     if (reducedMotion) {
       finishIntro();
       return;

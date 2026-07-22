@@ -32,8 +32,8 @@ router.post('/register', requireGuest, authLimit, async (req, res, next) => {
     }
     const existing = await query('SELECT 1 FROM users WHERE email=$1', [parsed.data.email]);
     if (existing.rowCount) {
-      flash(req, 'error', 'An account already exists for this email address.');
-      return res.redirect('/login');
+      flash(req, 'error', 'An account already exists for this email address. Sign in instead.');
+      return res.redirect('/register');
     }
     const hash = await bcrypt.hash(parsed.data.password, 12);
     const user = await withTransaction(async client => {
@@ -57,7 +57,13 @@ router.post('/register', requireGuest, authLimit, async (req, res, next) => {
         res.redirect('/app');
       });
     });
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error?.code === '23505') {
+      flash(req, 'error', 'An account already exists for this email address. Sign in instead.');
+      return res.redirect('/register');
+    }
+    next(error);
+  }
 });
 
 router.get('/login', requireGuest, (req, res) => res.render('login', { title: 'Sign in' }));

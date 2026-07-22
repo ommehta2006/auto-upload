@@ -42,7 +42,7 @@ await query(`UPDATE youtube_accounts
              WHERE status='CONNECTING'`);
 
 const app = express();
-if (config.trustProxy) app.set('trust proxy', 1);
+if (config.trustProxy) app.set('trust proxy', true);
 app.set('view engine', 'ejs');
 app.set('views', path.join(config.rootDir, 'views'));
 app.disable('x-powered-by');
@@ -68,18 +68,27 @@ app.use('/assets', express.static(path.join(config.rootDir, 'public'), {
   etag: true
 }));
 
+app.use((req, _res, next) => {
+  const forwardedProto = String(req.get('x-forwarded-proto') || '');
+  if (config.trustProxy && forwardedProto.split(',').map(value => value.trim()).includes('https')) {
+    req.headers['x-forwarded-proto'] = 'https';
+  }
+  next();
+});
+
 const PgStore = connectPgSimple(session);
 app.use(session({
   store: new PgStore({ pool, tableName: 'user_sessions', createTableIfMissing: false }),
   name: 'youtubepilot.sid',
   secret: process.env.SESSION_SECRET,
+  proxy: config.trustProxy,
   resave: false,
   saveUninitialized: false,
   rolling: true,
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: config.cookieSecure === 'true' ? true : config.cookieSecure === 'false' ? false : 'auto',
+    secure: config.cookieSecure !== 'false',
     maxAge: config.sessionHours * 60 * 60 * 1000
   }
 }));

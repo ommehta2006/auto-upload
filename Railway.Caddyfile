@@ -11,6 +11,8 @@
   }
 
   handle {
-    reverse_proxy 127.0.0.1:3001
+    reverse_proxy 127.0.0.1:3001 {
+      header_up X-Forwarded-Proto https
+    }
   }
 }

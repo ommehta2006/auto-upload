@@ -1,16 +1,20 @@
 <% const introAutoplay = Boolean(currentUser); %>
 <main class="pilot-cinema" data-cinematic-login data-intro-autoplay="<%= introAutoplay ? 'true' : 'false' %>">
   <canvas class="pilot-ambient" data-ambient-canvas aria-hidden="true"></canvas>
-  <canvas class="pilot-intro <%= introAutoplay ? '' : 'is-hidden' %>" data-intro-canvas aria-hidden="true"></canvas>
+  <% if (introAutoplay) { %>
+    <canvas class="pilot-intro" data-intro-canvas aria-hidden="true"></canvas>
+  <% } %>
   <div class="pilot-vignette" aria-hidden="true"></div>
 
-  <div class="pilot-intro-copy" data-intro-copy <%= introAutoplay ? '' : 'hidden' %>>
-    <div>
-      <div class="pilot-intro-eyebrow">Cloud publishing infrastructure</div>
-      <div class="pilot-intro-name">YouTube<span>Pilot</span></div>
-      <div class="pilot-intro-line">Automate with precision</div>
+  <% if (introAutoplay) { %>
+    <div class="pilot-intro-copy" data-intro-copy>
+      <div>
+        <div class="pilot-intro-eyebrow">Cloud publishing infrastructure</div>
+        <div class="pilot-intro-name">YouTube<span>Pilot</span></div>
+        <div class="pilot-intro-line">Automate with precision</div>
+      </div>
     </div>
-  </div>
+  <% } %>
 
   <header class="pilot-topbar">
     <a class="pilot-brand" href="/">
