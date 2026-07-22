@@ -223,7 +223,8 @@ export async function startYouTubeLogin(userId) {
     await browserLock?.release().catch(() => {});
     stopProcess(remote?.websockify); stopProcess(remote?.x11vnc);
     if (remote?.tokenFile) await fs.promises.rm(remote.tokenFile,{ force:true }).catch(() => {});
-    await query(`UPDATE youtube_accounts SET status='ERROR',last_error=$2,updated_at=NOW() WHERE user_id=$1`,[userId,error.message]).catch(() => {});
+    const profileHealth = error.code === 'BROWSER_PROFILE_LOCKED' ? 'BROWSER_PROFILE_LOCKED' : 'UNKNOWN';
+    await query(`UPDATE youtube_accounts SET status='ERROR',browser_profile_health=$3,last_error=$2,updated_at=NOW() WHERE user_id=$1`,[userId,error.message,profileHealth]).catch(() => {});
     throw error;
   }
 }

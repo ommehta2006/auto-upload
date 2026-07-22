@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { chromium } from 'playwright';
 import { config } from '../config.js';
 import { query } from '../db.js';
@@ -9,6 +10,7 @@ import { addLog } from './logs.js';
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const LOCK_TTL_MS = 10 * 60_000;
 const LOCK_HEARTBEAT_MS = 20_000;
+const CHROMIUM_SINGLETON_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
 
 export function assertUuid(value, label = 'identifier') {
   if (!UUID_PATTERN.test(String(value || ''))) throw new Error(`Invalid ${label}.`);
@@ -117,9 +119,94 @@ export async function acquireBrowserLock({ userId, channelId, owner, metadata = 
   };
 }
 
+async function readSingletonTarget(lockPath) {
+  try {
+    return await fs.readlink(lockPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return '';
+    if (error?.code !== 'EINVAL') throw error;
+    return fs.readFile(lockPath, 'utf8').catch(() => '');
+  }
+}
+
+function parseSingletonTarget(target) {
+  const match = String(target || '').trim().match(/^(.+)-(\d+)$/);
+  if (!match) return { host:'', pid:0 };
+  return { host:match[1], pid:Number(match[2]) };
+}
+
+function isProcessRunning(pid) {
+  if (!pid || process.platform === 'win32') return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+async function processCommand(pid) {
+  if (!pid || process.platform === 'win32') return '';
+  return fs.readFile(`/proc/${pid}/cmdline`, 'utf8').then(text => text.replace(/\0/g, ' ')).catch(() => '');
+}
+
+async function waitForProcessExit(pid, timeoutMs = 2500) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!isProcessRunning(pid)) return true;
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  return !isProcessRunning(pid);
+}
+
+async function terminateProfileProcess(pid, profileDir) {
+  const command = await processCommand(pid);
+  const normalized = path.resolve(profileDir);
+  const ownsProfile = command.includes(normalized) && /chrome|chromium|ms-playwright/i.test(command);
+  if (!ownsProfile) return false;
+  try { process.kill(pid, 'SIGTERM'); } catch {}
+  if (!(await waitForProcessExit(pid, 3000))) {
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+    await waitForProcessExit(pid, 2000);
+  }
+  return !isProcessRunning(pid);
+}
+
+async function clearChromiumSingletonFiles(profileDir) {
+  await Promise.all(CHROMIUM_SINGLETON_FILES.map(file => fs.rm(path.join(profileDir, file), { recursive:true, force:true }).catch(() => {})));
+}
+
+export async function recoverStaleChromiumProfileLock({ userId, channelId, profileDir, mode, logEvents = true }) {
+  const lockPath = path.join(profileDir, 'SingletonLock');
+  const target = await readSingletonTarget(lockPath);
+  if (!target) return false;
+  const { host, pid } = parseSingletonTarget(target);
+  const sameHost = !host || host === os.hostname();
+  if (sameHost && isProcessRunning(pid)) {
+    const terminated = await terminateProfileProcess(pid, profileDir);
+    if (!terminated) {
+      const error = new Error('The YouTube Studio browser profile is already open. Close the active secure browser window, then try again.');
+      error.code = 'BROWSER_PROFILE_LOCKED';
+      throw error;
+    }
+    if (logEvents) await addLog(userId, 'warning', 'Recovered a stale Chromium browser process for the channel profile.', {
+      channelId,
+      browserMode:mode,
+      event:'browser_profile_process_recovered'
+    }).catch(() => {});
+  }
+  await clearChromiumSingletonFiles(profileDir);
+  if (logEvents) await addLog(userId, 'warning', 'Cleared a stale Chromium profile lock before opening YouTube Studio.', {
+    channelId,
+    browserMode:mode,
+    event:'browser_profile_lock_recovered'
+  }).catch(() => {});
+  return true;
+}
+
 export async function launchYouTubePersistentContext({ userId, channelId, mode, headless, timezoneId = 'Asia/Kolkata', locale = 'en-US' }) {
   const profileDir = await ensureChannelProfile(userId, channelId);
-  await addLog(userId, 'info', 'Browser profile opened.', { channelId, browserMode:mode, event:'browser_profile_opened' }).catch(() => {});
+  await recoverStaleChromiumProfileLock({ userId, channelId, profileDir, mode });
   const context = await chromium.launchPersistentContext(profileDir, {
     headless,
     locale,
@@ -142,6 +229,7 @@ export async function launchYouTubePersistentContext({ userId, channelId, mode, 
       '--window-size=1440,900'
     ]
   });
+  await addLog(userId, 'info', 'Browser profile opened.', { channelId, browserMode:mode, event:'browser_profile_opened' }).catch(() => {});
   const close = context.close.bind(context);
   context.close = async (...args) => {
     try {

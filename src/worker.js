@@ -132,15 +132,18 @@ async function processUpload(post) {
       uploadId:post.upload_id,url:result.url,videoId:result.videoId,warnings:result.warnings,probe:result.probe
     });
   } catch (error) {
-    const code = error instanceof YouTubeAutomationError ? error.code : 'AUTOMATION_FAILED';
+    const code = error instanceof YouTubeAutomationError ? error.code : (error?.code || 'AUTOMATION_FAILED');
     const risk = assessDuplicateRisk(post);
     const status = ['LOGIN_REQUIRED','YOUTUBE_LOGIN_REQUIRED'].includes(code) ? 'LOGIN_REQUIRED'
       : ['ACCOUNT_ACTION_REQUIRED','GOOGLE_VERIFICATION_REQUIRED'].includes(code) ? (risk.reviewRequired ? 'REVIEW_REQUIRED' : 'PAUSED_FOR_VERIFICATION')
+      : code === 'BROWSER_PROFILE_LOCKED' ? 'READY'
       : code === 'REVIEW_REQUIRED' || error?.outcomeUncertain ? 'REVIEW_REQUIRED'
       : post.attempts >= post.max_attempts ? 'FAILED' : 'READY';
     await query(`UPDATE uploads SET status=$2,error=$3,duplicate_risk=$4,updated_at=NOW() WHERE id=$1`,[post.id,status,String(error.message || 'Upload failed.').slice(0,2000),risk.risk]);
     await addLog(post.user_id,'info','Duplicate risk check completed.',{ uploadId:post.upload_id,workflowStage:post.workflow_stage,status:risk.risk,event:'duplicate_check_completed' });
-    if (['LOGIN_REQUIRED','PAUSED_FOR_VERIFICATION'].includes(status)) {
+    if (code === 'BROWSER_PROFILE_LOCKED') {
+      await query(`UPDATE youtube_accounts SET browser_profile_health='BROWSER_PROFILE_LOCKED',last_error=$2,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[post.user_id,String(error.message).slice(0,1000)]);
+    } else if (['LOGIN_REQUIRED','PAUSED_FOR_VERIFICATION'].includes(status)) {
       const accountStatus = status === 'LOGIN_REQUIRED' ? 'SESSION_EXPIRED' : 'VERIFICATION_REQUIRED';
       await query(`UPDATE youtube_accounts SET status=$2,browser_profile_health=$3,last_error=$4,last_checked_at=NOW(),updated_at=NOW() WHERE user_id=$1`,[post.user_id,accountStatus,status,String(error.message).slice(0,1000)]);
     }

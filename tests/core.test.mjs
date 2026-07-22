@@ -8,7 +8,7 @@ import { encryptJson, decryptJson } from '../src/services/crypto.js';
 import { validateContentType } from '../src/services/media-probe.js';
 import { uploadSchema } from '../src/validation.js';
 import { parseUploadsWorkbook } from '../src/services/excel.js';
-import { browserProfileDir, ensureChannelProfile } from '../src/services/persistent-browser.js';
+import { browserProfileDir, ensureChannelProfile, recoverStaleChromiumProfileLock } from '../src/services/persistent-browser.js';
 import { assessDuplicateRisk } from '../src/services/duplicate-risk.js';
 
 process.env.SESSION_ENCRYPTION_KEY = Buffer.alloc(32,7).toString('base64');
@@ -72,6 +72,23 @@ test('persistent browser profile directory is created with private permissions',
   const stat = await fs.stat(directory);
   assert.equal(stat.isDirectory(), true);
   if (process.platform !== 'win32') assert.equal(stat.mode & 0o777, 0o700);
+});
+
+test('stale Chromium profile lock files are cleared before relaunch', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(),'ytpilot-lock-'));
+  await fs.writeFile(path.join(directory,'SingletonLock'), 'old-host-999999');
+  await fs.writeFile(path.join(directory,'SingletonCookie'), 'cookie');
+  await fs.writeFile(path.join(directory,'SingletonSocket'), 'socket');
+  const recovered = await recoverStaleChromiumProfileLock({
+    userId:'00000000-0000-4000-8000-000000000011',
+    channelId:'00000000-0000-4000-8000-000000000111',
+    profileDir:directory,
+    mode:'TEST',
+    logEvents:false
+  });
+  assert.equal(recovered, true);
+  await assert.rejects(() => fs.stat(path.join(directory,'SingletonLock')), /ENOENT/);
+  await fs.rm(directory,{ recursive:true,force:true });
 });
 
 test('duplicate risk follows interrupted upload stage', () => {
