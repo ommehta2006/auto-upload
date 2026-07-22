@@ -96,7 +96,6 @@ async function startSigninBrowser(existingState) {
   const chrome = spawn(executable, [
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${debuggingPort}`,
-    '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-notifications',
     '--no-first-run',
