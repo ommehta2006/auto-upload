@@ -1,5 +1,5 @@
-<% const introAutoplay = Boolean(currentUser); %>
-<main class="pilot-cinema" data-cinematic-login data-intro-autoplay="<%= introAutoplay ? 'true' : 'false' %>">
+<% const introAutoplay = Boolean(typeof showIntroOnce !== 'undefined' && showIntroOnce && !currentUser); %>
+<main class="pilot-cinema" data-cinematic-login data-intro-autoplay="<%= introAutoplay ? 'true' : 'false' %>" data-intro-once-key="youtubepilot-login-intro-shown">
   <canvas class="pilot-ambient" data-ambient-canvas aria-hidden="true"></canvas>
   <% if (introAutoplay) { %>
     <canvas class="pilot-intro" data-intro-canvas aria-hidden="true"></canvas>

@@ -7,7 +7,9 @@
   const introCopy = root.querySelector('[data-intro-copy]');
   const controls = root.querySelector('[data-intro-controls]');
   const replayButton = root.querySelector('[data-replay-intro]');
-  const shouldAutoplayIntro = root.dataset.introAutoplay === 'true';
+  const introOnceKey = root.dataset.introOnceKey || '';
+  const introAlreadyShown = introOnceKey ? localStorage.getItem(introOnceKey) === 'true' : false;
+  const shouldAutoplayIntro = root.dataset.introAutoplay === 'true' && !introAlreadyShown;
   const ictx = intro?.getContext('2d') || null;
   const actx = ambient?.getContext('2d') || null;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -184,6 +186,7 @@
 
   function finishIntro() {
     finished = true;
+    if (introOnceKey) localStorage.setItem(introOnceKey, 'true');
     if (introFailSafe) clearTimeout(introFailSafe);
     intro?.classList.add('is-hidden');
     if (root.matches('[data-cinematic-intro]')) root.classList.add('is-hidden');
@@ -193,6 +196,7 @@
 
   function startIntro() {
     if (!intro || !ictx) return;
+    if (introOnceKey) localStorage.setItem(introOnceKey, 'true');
     if (reducedMotion) {
       finishIntro();
       return;
