@@ -152,6 +152,7 @@
 
   function playSound() {
     if (!soundOn) return;
+    if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return;
     try {
       audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
     } catch {
