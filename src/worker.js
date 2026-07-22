@@ -137,16 +137,16 @@ async function processUpload(post) {
     }
     const screenshot = fs.existsSync(screenshotPath) ? screenshotName : '';
     await addLog(post.user_id,'error','YouTube upload failed.',{ uploadId:post.upload_id,status,code,error:error.message,screenshot });
-    if (code === 'ACCOUNT_ACTION_REQUIRED') {
+    if (['LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED'].includes(code)) {
       try {
         const session = await startYouTubeLogin(post.user_id);
-        await addLog(post.user_id,'warning','Remote YouTube Studio verification window is ready. Open it from the Channel panel, complete Google verification yourself, then save the encrypted session.',{
+        await addLog(post.user_id,'warning','Remote YouTube Studio login window is ready. Open it from the Channel panel, complete Google login or verification yourself, then save the encrypted session.',{
           uploadId:post.upload_id,
           expiresAt:session.expiresAt,
           remoteUrl:session.remoteUrl
         });
       } catch (sessionError) {
-        await addLog(post.user_id,'warning','Could not automatically open the remote verification window.',{
+        await addLog(post.user_id,'warning','Could not automatically open the remote login window.',{
           uploadId:post.upload_id,
           error:sessionError.message
         });
