@@ -16,7 +16,6 @@ export class YouTubeAutomationError extends Error {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const YOUTUBE_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
 const ACCOUNT_VERIFICATION_PATTERN = /verify it'?s you|verify it’s you|suspicious activity|confirm your identity|to continue, we need to confirm|check your phone|enter the code|two-step verification/i;
-const ACCOUNT_VERIFICATION_WAIT_MS = 10 * 60_000;
 
 async function visible(locator, timeout = 1200) {
   return locator?.first().isVisible({ timeout }).catch(() => false);
@@ -102,78 +101,13 @@ async function hasAccountVerification(page) {
   return ACCOUNT_VERIFICATION_PATTERN.test(body);
 }
 
-async function clickAccountVerificationButton(page) {
-  return page.evaluate(() => {
-    const buttonPattern = /^(next|verify now|continue|yes,?\s*it'?s me)$/i;
-    const verificationPattern = /verify it'?s you|verify it’s you|confirm it'?s really you|confirm your identity/i;
-    const isVisible = el => {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
-    };
-    const isEnabled = el => !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.hasAttribute('disabled');
-    const roots = Array.from(document.querySelectorAll('[role="dialog"], ytcp-dialog, tp-yt-paper-dialog, div'))
-      .filter(el => {
-        if (!isVisible(el) || !verificationPattern.test(el.innerText || '')) return false;
-        const rect = el.getBoundingClientRect();
-        return rect.width >= 280 && rect.width <= 900 && rect.height >= 100 && rect.height <= 520;
-      })
-      .sort((a, b) => {
-        const aRect = a.getBoundingClientRect();
-        const bRect = b.getBoundingClientRect();
-        return (aRect.width * aRect.height) - (bRect.width * bRect.height);
-      });
-    for (const root of roots) {
-      const buttons = Array.from(root.querySelectorAll('button, [role="button"]'))
-        .filter(el => isVisible(el) && isEnabled(el));
-      const target = buttons
-        .filter(el => buttonPattern.test((el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim()))
-        .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0];
-      if (target) {
-        target.click();
-        return (target.innerText || target.textContent || target.getAttribute('aria-label') || 'verification button').trim();
-      }
-    }
-    return '';
-  }).catch(() => '');
-}
-
 async function waitForManualAccountApproval(page, log = () => {}, captureVerificationScreenshot = async () => '') {
   if (!(await hasAccountVerification(page))) return false;
-  const clickStarted = Date.now();
-  let clickedButton = '';
-  while (!clickedButton && Date.now() - clickStarted < 30_000) {
-    clickedButton = await clickAccountVerificationButton(page);
-    if (clickedButton) break;
-    await sleep(1000);
-  }
-  if (clickedButton) log('info', `Clicked Google verification ${clickedButton} button.`);
-  await sleep(5000);
   const screenshot = await captureVerificationScreenshot().catch(() => '');
   if (screenshot) {
-    log('warning', 'Google verification challenge screenshot captured.', { screenshot });
+    log('warning', 'Google verification challenge detected; screenshot captured.', { screenshot });
   }
-  log('warning', 'Google account verification is waiting for manual approval. The worker will wait up to 10 minutes.');
-  const started = Date.now();
-  let lastScreenshotAt = Date.now();
-  let waitingScreenshots = 0;
-  while (Date.now() - started < ACCOUNT_VERIFICATION_WAIT_MS) {
-    if (!(await hasAccountVerification(page))) {
-      log('info', 'Google account verification cleared; continuing upload.');
-      await sleep(2500);
-      return true;
-    }
-    if (Date.now() - lastScreenshotAt >= 15_000 && waitingScreenshots < 36) {
-      const waitingScreenshot = await captureVerificationScreenshot().catch(() => '');
-      if (waitingScreenshot) {
-        waitingScreenshots += 1;
-        log('warning', 'Google verification waiting screenshot captured.', { screenshot:waitingScreenshot });
-      }
-      lastScreenshotAt = Date.now();
-    }
-    await sleep(5000);
-  }
-  throw new YouTubeAutomationError('Google account verification was not approved within 10 minutes.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
+  throw new YouTubeAutomationError('Google is requesting manual verification. Open the remote YouTube Studio window, complete the prompt yourself, save the encrypted session, then the blocked upload will retry.', 'ACCOUNT_ACTION_REQUIRED', { retryable:false });
 }
 
 async function assertLoggedIn(page, log = () => {}, captureVerificationScreenshot = async () => '') {
