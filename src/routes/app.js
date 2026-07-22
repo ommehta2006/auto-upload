@@ -363,7 +363,19 @@ router.post('/app/settings',async (req,res,next) => {
 
 router.post('/app/youtube/connect',async (req,res,next) => { try { await startYouTubeLogin(req.session.userId); flash(req,'info','Remote YouTube Studio opened. Complete login, then save the connection.'); res.redirect('/app/youtube/connect'); } catch (error) { next(error); } });
 router.get('/app/youtube/connect',async (req,res,next) => { try { const session=loginSessionStatus(req.session.userId); if (!session.active) { flash(req,'error','The YouTube connection window is not active.'); return res.redirect('/app#channel'); } res.render('youtube-connect',{ title:'Connect YouTube',session }); } catch (error) { next(error); } });
-router.post('/app/youtube/complete',async (req,res,next) => { try { await completeYouTubeLogin(req.session.userId); flash(req,'success','YouTube connected. Scheduled uploads can run in the backend.'); res.redirect('/app#channel'); } catch (error) { next(error); } });
+router.post('/app/youtube/complete',async (req,res,next) => {
+  try {
+    await completeYouTubeLogin(req.session.userId);
+    flash(req,'success','YouTube connected. Scheduled uploads can run in the backend.');
+    res.redirect('/app#channel');
+  } catch (error) {
+    if (loginSessionStatus(req.session.userId).active) {
+      flash(req,'error',error.message || 'Complete Google login before saving the connection.');
+      return res.redirect('/app/youtube/connect');
+    }
+    next(error);
+  }
+});
 router.post('/app/youtube/cancel',async (req,res,next) => { try { await cancelYouTubeLogin(req.session.userId); flash(req,'info','YouTube connection window closed.'); res.redirect('/app#channel'); } catch (error) { next(error); } });
 router.post('/app/youtube/disconnect',async (req,res,next) => { try { await disconnectYouTube(req.session.userId); flash(req,'success','YouTube session deleted securely.'); res.redirect('/app#channel'); } catch (error) { next(error); } });
 
