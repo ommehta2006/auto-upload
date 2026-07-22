@@ -106,6 +106,20 @@ async function assertLoggedIn(page) {
   }
 }
 
+async function waitForStudioReady(page, log = () => {}) {
+  const started = Date.now();
+  while (Date.now() - started < 45_000) {
+    await dismissObstructions(page, log);
+    await assertLoggedIn(page);
+    const createVisible = await visible(page.locator('#create-icon'), 600)
+      || await visible(page.getByRole('button', { name:/create/i }), 600)
+      || await visible(page.getByText(/^create$/i), 600)
+      || await visible(page.getByText(/upload videos?/i), 600);
+    if (createVisible) return;
+    await sleep(1500);
+  }
+}
+
 async function openUploadDialog(page) {
   await dismissObstructions(page);
   const createClicked = await clickCandidates([
@@ -404,7 +418,7 @@ export async function uploadToYouTube({ post, storageState, videoPath, thumbnail
     await page.goto(config.youtubeStudioUrl,{ waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
     await assertLoggedIn(page);
     await dismissObstructions(page,log);
-    await assertLoggedIn(page);
+    await waitForStudioReady(page,log);
     await openUploadDialog(page);
     await chooseVideoFile(page,videoPath);
     await waitForDetails(page);
