@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import { chromium } from 'playwright';
 import { config } from '../config.js';
 import { query } from '../db.js';
@@ -34,6 +35,17 @@ function stopProcess(child) {
   setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 2000).unref();
 }
 
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+    server.once('error', reject);
+  });
+}
+
 async function closeActive(reason = 'closed') {
   if (!activeSession) return;
   const session = activeSession;
@@ -41,8 +53,10 @@ async function closeActive(reason = 'closed') {
   clearTimeout(session.timeout);
   await session.context?.close().catch(() => {});
   await session.browser?.close().catch(() => {});
+  stopProcess(session.chrome);
   stopProcess(session.websockify);
   stopProcess(session.x11vnc);
+  if (session.profileDir) await fs.promises.rm(session.profileDir,{ recursive:true, force:true }).catch(() => {});
   if (session.tokenFile) { try { fs.unlinkSync(session.tokenFile); } catch {} }
   await addLog(session.userId, 'info', 'YouTube connection window closed.', { reason });
 }
@@ -74,6 +88,47 @@ function remoteUrl(accessToken) {
   return url.toString();
 }
 
+async function startSigninBrowser(existingState) {
+  const profileDir = path.join(config.tempDir, `youtube-login-${randomToken(8)}`);
+  await fs.promises.mkdir(profileDir, { recursive:true, mode:0o700 });
+  const debuggingPort = await freePort();
+  const executable = chromium.executablePath();
+  const chrome = spawn(executable, [
+    `--user-data-dir=${profileDir}`,
+    `--remote-debugging-port=${debuggingPort}`,
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-notifications',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--password-store=basic',
+    '--use-mock-keychain',
+    '--window-size=1440,1000',
+    '--disable-features=Translate,MediaRouter',
+    'about:blank'
+  ], { env:{ ...process.env, DISPLAY:config.display }, stdio:['ignore','ignore','pipe'] });
+  chrome.stderr?.on('data', data => {
+    const text = String(data).trim();
+    if (text && !/DevTools listening|dbus|sandbox/i.test(text)) console.error(`[signin-browser] ${text}`);
+  });
+  try {
+    await waitForPort('127.0.0.1', debuggingPort, 15_000);
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debuggingPort}`);
+    const context = browser.contexts()[0];
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome ||= { runtime:{} };
+    }).catch(() => {});
+    if (existingState?.cookies?.length) await context.addCookies(existingState.cookies).catch(() => {});
+    const page = context.pages()[0] || await context.newPage();
+    return { chrome, browser, context, page, profileDir };
+  } catch (error) {
+    stopProcess(chrome);
+    await fs.promises.rm(profileDir,{ recursive:true, force:true }).catch(() => {});
+    throw error;
+  }
+}
+
 async function studioLooksAuthenticated(page) {
   const url = page.url().toLowerCase();
   if (url.includes('accounts.google.com') || url.includes('servicelogin')) return false;
@@ -92,18 +147,14 @@ export async function startYouTubeLogin(userId) {
      ON CONFLICT (user_id) DO UPDATE SET status='CONNECTING',last_error=NULL,updated_at=NOW() RETURNING *`, [userId]
   );
   const account = accountResult.rows[0];
-  let remote; let browser; let context;
+  let remote; let browser; let context; let signin;
   try {
     const existingState = account.encrypted_state ? decryptJson(account.encrypted_state) : undefined;
     const accessToken = randomToken(18);
     remote = await startRemoteDesktop(accessToken);
-    browser = await chromium.launch({
-      headless: false,
-      env: { ...process.env, DISPLAY: config.display },
-      args: ['--no-sandbox','--disable-dev-shm-usage','--disable-notifications','--window-size=1440,1000','--no-first-run','--disable-features=Translate']
-    });
-    context = await browser.newContext({ locale:'en-US', timezoneId:'Asia/Kolkata', viewport:{ width:1440,height:1000 }, storageState: existingState });
-    const page = await context.newPage();
+    signin = await startSigninBrowser(existingState);
+    ({ browser, context } = signin);
+    const { page } = signin;
     await page.goto(config.youtubeStudioUrl, { waitUntil:'domcontentloaded', timeout:config.navigationTimeoutMs });
     const expiresAt = new Date(Date.now() + config.loginSessionMinutes * 60_000);
     const url = remoteUrl(accessToken);
@@ -112,11 +163,13 @@ export async function startYouTubeLogin(userId) {
       await closeActive('expired');
     }, config.loginSessionMinutes * 60_000);
     timeout.unref();
-    activeSession = { userId, accountId:account.id, browser, context, page, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
+    activeSession = { userId, accountId:account.id, browser, context, page, chrome:signin.chrome, profileDir:signin.profileDir, ...remote, remoteUrl:url, accessToken, expiresAt, timeout };
     await addLog(userId,'info','YouTube connection window opened.',{ expiresAt });
     return { remoteUrl:url, expiresAt, alreadyActive:false };
   } catch (error) {
     await context?.close().catch(() => {}); await browser?.close().catch(() => {});
+    stopProcess(signin?.chrome);
+    if (signin?.profileDir) await fs.promises.rm(signin.profileDir,{ recursive:true, force:true }).catch(() => {});
     stopProcess(remote?.websockify); stopProcess(remote?.x11vnc);
     if (remote?.tokenFile) await fs.promises.rm(remote.tokenFile,{ force:true }).catch(() => {});
     await query(`UPDATE youtube_accounts SET status='ERROR',last_error=$2,updated_at=NOW() WHERE user_id=$1`,[userId,error.message]).catch(() => {});
