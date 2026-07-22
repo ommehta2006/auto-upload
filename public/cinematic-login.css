@@ -38,6 +38,12 @@
   inset: 0;
   z-index: 1000;
   pointer-events: none;
+  transition: opacity 0.7s ease, visibility 0.7s ease;
+}
+
+.pilot-auth-intro.is-hidden {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .pilot-ambient,

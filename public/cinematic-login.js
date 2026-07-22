@@ -24,6 +24,7 @@
   let stars = [];
   let dust = [];
   let background = [];
+  let introFailSafe;
 
   function resize() {
     dpr = Math.min(devicePixelRatio || 1, 2);
@@ -183,7 +184,9 @@
 
   function finishIntro() {
     finished = true;
+    if (introFailSafe) clearTimeout(introFailSafe);
     intro?.classList.add('is-hidden');
+    if (root.matches('[data-cinematic-intro]')) root.classList.add('is-hidden');
     if (controls) controls.style.display = 'none';
     if (introCopy) introCopy.style.opacity = 0;
   }
@@ -200,6 +203,8 @@
     if (controls) controls.hidden = false;
     if (controls) controls.style.display = 'flex';
     startedAt = performance.now();
+    if (introFailSafe) clearTimeout(introFailSafe);
+    introFailSafe = setTimeout(finishIntro, 4200);
     playSound();
     requestAnimationFrame(drawIntro);
   }
@@ -207,9 +212,10 @@
   function drawIntro(now) {
     if (finished) return;
 
-    const seconds = (now - startedAt) / 1000;
-    const progress = clamp(seconds / 3);
-    ictx.clearRect(0, 0, width, height);
+    try {
+      const seconds = (now - startedAt) / 1000;
+      const progress = clamp(seconds / 3);
+      ictx.clearRect(0, 0, width, height);
 
     const gradient = ictx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, Math.max(width, height) * 0.7);
     gradient.addColorStop(0, '#16030a');
@@ -288,11 +294,14 @@
       }
     }
 
-    if (seconds >= 3) {
+      if (seconds >= 3) {
+        finishIntro();
+        return;
+      }
+      requestAnimationFrame(drawIntro);
+    } catch {
       finishIntro();
-      return;
     }
-    requestAnimationFrame(drawIntro);
   }
 
   function drawAmbient(now) {
