@@ -2,7 +2,7 @@
   const timeValue = (value, fallback) => /^\d{2}:\d{2}/.test(String(value || '')) ? String(value).slice(0,5) : fallback;
 %>
 <%- include('partials/head') %>
-<link rel="stylesheet" href="/assets/cinematic-login.css">
+<link rel="stylesheet" href="/assets/cinematic-login.css?v=20260722-dashboard-fix">
 <%- include('partials/cinematic-intro') %>
 <%- include('partials/nav') %>
 <div class="app-shell">
@@ -56,5 +56,5 @@
     <section id="activity" class="panel"><div class="section-heading"><div><p class="eyebrow">Evidence trail</p><h2>Activity & errors</h2></div></div><div class="timeline"><% logs.forEach(log => { %><article class="timeline-item timeline-<%= log.level %>"><span></span><div><strong><%= log.message %></strong><small><%= formatDate(log.created_at,settings.timezone) %></small><% if (log.details?.screenshot) { %><a href="/app/screenshots/<%= log.details.screenshot %>">Download failure screenshot</a><% } %></div></article><% }) %><% if (!logs.length) { %><div class="empty-state">No activity recorded yet.</div><% } %></div></section>
   </main>
 </div>
-<script src="/assets/cinematic-login.js" defer></script>
+<script src="/assets/cinematic-login.js?v=20260722-dashboard-fix" defer></script>
 <%- include('partials/footer') %>

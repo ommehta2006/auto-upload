@@ -65,7 +65,8 @@ app.use(rateLimit({ windowMs: 60_000, limit: 240, standardHeaders: 'draft-8', le
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use('/assets', express.static(path.join(config.rootDir, 'public'), {
-  maxAge: config.nodeEnv === 'production' ? '1d' : 0,
+  maxAge: 0,
+  cacheControl: false,
   etag: true
 }));
 

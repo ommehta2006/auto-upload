@@ -43,10 +43,32 @@ const UPLOAD_COLUMNS = `
   recording_date,recording_location,license,distribution,allow_embedding,notify_subscribers,category,comments_mode,
   comments_sort,show_like_count,remix_mode,related_video,enabled,status,error`;
 
+const DEFAULT_SETTINGS = {
+  automation_enabled: true,
+  maximum_uploads_per_day: 6,
+  minimum_gap_minutes: 20,
+  max_attempts: 3,
+  retry_delay_minutes: 20,
+  stale_upload_minutes: 180,
+  timezone: 'Asia/Kolkata',
+  upload_window_start: '00:00',
+  upload_window_end: '23:59',
+  default_visibility: 'PRIVATE',
+  default_audience: 'NOT_MADE_FOR_KIDS',
+  default_category: '22',
+  default_language: ''
+};
+
+async function settingsForUser(userId, columns = '*') {
+  await query('INSERT INTO user_settings (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',[userId]);
+  const result = await query(`SELECT ${columns} FROM user_settings WHERE user_id=$1`,[userId]);
+  return { ...DEFAULT_SETTINGS, ...(result.rows[0] || {}) };
+}
+
 async function dashboardData(userId) {
   const [user,settings,account,media,uploads,logs,counts,storage] = await Promise.all([
     query('SELECT id,email,display_name,created_at FROM users WHERE id=$1',[userId]),
-    query('SELECT * FROM user_settings WHERE user_id=$1',[userId]),
+    settingsForUser(userId),
     query('SELECT id,label,status,channel_name,channel_url,last_checked_at,last_error,connected_at FROM youtube_accounts WHERE user_id=$1',[userId]),
     query('SELECT * FROM media_files WHERE user_id=$1 ORDER BY created_at DESC LIMIT 300',[userId]),
     query(`SELECT u.*,m.original_name AS media_name,m.size_bytes AS media_size,t.original_name AS thumbnail_name,c.original_name AS caption_name_file
@@ -63,7 +85,7 @@ async function dashboardData(userId) {
     query('SELECT COALESCE(SUM(size_bytes),0)::bigint AS used_bytes FROM media_files WHERE user_id=$1',[userId])
   ]);
   return {
-    user:user.rows[0],settings:settings.rows[0],account:account.rows[0],media:media.rows,uploads:uploads.rows,logs:logs.rows,
+    user:user.rows[0],settings,account:account.rows[0],media:media.rows,uploads:uploads.rows,logs:logs.rows,
     counts:counts.rows[0],storageUsedBytes:Number(storage.rows[0].used_bytes || 0),loginSession:loginSessionStatus(userId)
   };
 }
@@ -129,7 +151,7 @@ function kindLabel(kind) { return kind === 'VIDEO' ? 'Video' : kind === 'THUMBNA
 router.post('/app/import-excel',uploadLimit,excelUpload.single('excel'),verifyMultipartCsrf,async (req,res,next) => {
   try {
     if (!req.file) throw new Error('Select an Excel workbook.');
-    const settings = (await query('SELECT * FROM user_settings WHERE user_id=$1',[req.session.userId])).rows[0];
+    const settings = await settingsForUser(req.session.userId);
     const [rows,files] = await Promise.all([
       parseUploadsWorkbook(req.file.path,settings.timezone),
       query('SELECT id,kind,original_name FROM media_files WHERE user_id=$1',[req.session.userId])
@@ -184,9 +206,9 @@ router.get('/app/export-excel',async (req,res,next) => {
       query(`SELECT u.*,m.original_name AS media_name,t.original_name AS thumbnail_name,c.original_name AS caption_name_file FROM uploads u
              LEFT JOIN media_files m ON m.id=u.media_id LEFT JOIN media_files t ON t.id=u.thumbnail_id LEFT JOIN media_files c ON c.id=u.caption_file_id
              WHERE u.user_id=$1 ORDER BY u.automation_start_at`,[req.session.userId]),
-      query('SELECT * FROM user_settings WHERE user_id=$1',[req.session.userId])
+      settingsForUser(req.session.userId)
     ]);
-    const buffer = await buildUploadsWorkbook({ uploads:uploads.rows,settings:settings.rows[0] });
+    const buffer = await buildUploadsWorkbook({ uploads:uploads.rows,settings });
     res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition','attachment; filename="youtube_upload_plan.xlsx"');
     res.send(buffer);
@@ -197,7 +219,7 @@ async function normalizedSubmission(userId,body) {
   const parsed = uploadSchema.safeParse(body);
   if (!parsed.success) throw new Error(firstZodError(parsed.error));
   const data = parsed.data;
-  const settings = (await query('SELECT timezone FROM user_settings WHERE user_id=$1',[userId])).rows[0];
+  const settings = await settingsForUser(userId,'timezone');
   const media = (await query(`SELECT * FROM media_files WHERE id=$1 AND user_id=$2 AND kind='VIDEO'`,[data.mediaId,userId])).rows[0];
   if (!media) throw new Error('The selected source video does not belong to this account.');
   validateContentType(await probeVideo(absoluteStoragePath(media.relative_path)),data.contentType);
@@ -255,14 +277,14 @@ router.get('/app/uploads/:id/edit',async (req,res,next) => {
     const [upload,media,settings] = await Promise.all([
       query(`SELECT * FROM uploads WHERE id=$1 AND user_id=$2`,[req.params.id,req.session.userId]),
       query('SELECT * FROM media_files WHERE user_id=$1 ORDER BY kind,created_at DESC',[req.session.userId]),
-      query('SELECT * FROM user_settings WHERE user_id=$1',[req.session.userId])
+      settingsForUser(req.session.userId)
     ]);
     if (!upload.rowCount) return res.sendStatus(404);
     if (['UPLOADED','UPLOADING'].includes(upload.rows[0].status)) throw new Error('Uploaded or currently uploading items cannot be edited.');
-    const item = upload.rows[0]; const zone = settings.rows[0].timezone;
+    const item = upload.rows[0]; const zone = settings.timezone;
     const automation = DateTime.fromJSDate(new Date(item.automation_start_at)).setZone(zone);
     const publish = item.youtube_publish_at ? DateTime.fromJSDate(new Date(item.youtube_publish_at)).setZone(zone) : null;
-    res.render('edit-upload',{ title:'Edit upload',item,media:media.rows,settings:settings.rows[0],automationDate:automation.toFormat('yyyy-MM-dd'),automationTime:automation.toFormat('HH:mm'),publishDate:publish?.toFormat('yyyy-MM-dd') || '',publishTime:publish?.toFormat('HH:mm') || '' });
+    res.render('edit-upload',{ title:'Edit upload',item,media:media.rows,settings,automationDate:automation.toFormat('yyyy-MM-dd'),automationTime:automation.toFormat('HH:mm'),publishDate:publish?.toFormat('yyyy-MM-dd') || '',publishTime:publish?.toFormat('HH:mm') || '' });
   } catch (error) { next(error); }
 });
 
