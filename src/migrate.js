@@ -76,33 +76,15 @@ try {
       ALTER COLUMN workflow_stage SET NOT NULL,
       ALTER COLUMN duplicate_risk SET NOT NULL
   `);
+  await pool.query(`ALTER TABLE youtube_accounts DROP CONSTRAINT IF EXISTS youtube_accounts_status_check`);
   await pool.query(`
-    DO $$
-    DECLARE constraint_name TEXT;
-    BEGIN
-      SELECT conname INTO constraint_name
-      FROM pg_constraint
-      WHERE conrelid='youtube_accounts'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%status IN%';
-      IF constraint_name IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE youtube_accounts DROP CONSTRAINT %I', constraint_name);
-      END IF;
-      ALTER TABLE youtube_accounts ADD CONSTRAINT youtube_accounts_status_check
-        CHECK (status IN ('DISCONNECTED','CONNECTING','CONNECTED','SESSION_CHECKING','VERIFICATION_REQUIRED','VERIFICATION_IN_PROGRESS','VERIFICATION_COMPLETED','SESSION_EXPIRED','RECONNECT_REQUIRED','ATTENTION_REQUIRED','ERROR'));
-    END $$;
+    ALTER TABLE youtube_accounts ADD CONSTRAINT youtube_accounts_status_check
+      CHECK (status IN ('DISCONNECTED','CONNECTING','CONNECTED','SESSION_CHECKING','VERIFICATION_REQUIRED','VERIFICATION_IN_PROGRESS','VERIFICATION_COMPLETED','SESSION_EXPIRED','RECONNECT_REQUIRED','ATTENTION_REQUIRED','ERROR'))
   `);
+  await pool.query(`ALTER TABLE uploads DROP CONSTRAINT IF EXISTS uploads_status_check`);
   await pool.query(`
-    DO $$
-    DECLARE constraint_name TEXT;
-    BEGIN
-      SELECT conname INTO constraint_name
-      FROM pg_constraint
-      WHERE conrelid='uploads'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%status IN%';
-      IF constraint_name IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE uploads DROP CONSTRAINT %I', constraint_name);
-      END IF;
-      ALTER TABLE uploads ADD CONSTRAINT uploads_status_check
-        CHECK (status IN ('READY','UPLOADING','UPLOADED','PROCESSING','FAILED','FILE_MISSING','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION','RESUME_AVAILABLE','REVIEW_REQUIRED','PAUSED'));
-    END $$;
+    ALTER TABLE uploads ADD CONSTRAINT uploads_status_check
+      CHECK (status IN ('READY','UPLOADING','UPLOADED','PROCESSING','FAILED','FILE_MISSING','LOGIN_REQUIRED','ACCOUNT_ACTION_REQUIRED','PAUSED_FOR_VERIFICATION','RESUME_AVAILABLE','REVIEW_REQUIRED','PAUSED'))
   `);
   await pool.query(`
     UPDATE user_settings SET
