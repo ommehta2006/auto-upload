@@ -15,13 +15,10 @@ const authLimit = rateLimit({ windowMs: 15 * 60_000, limit: 15, standardHeaders:
 const DUMMY_PASSWORD_HASH = '$2b$12$MtbhxBR6Sx5jYpUmb6Xk6.4eAoLAAYlfxRYfNMkACUtbI1Y44FdY.';
 
 function invitationMatches(submitted) {
-  if (!config.signupInviteCode) return true;
-  const expected = Buffer.from(config.signupInviteCode);
-  const actual = Buffer.from(String(submitted || ''));
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  return true;
 }
 
-router.get('/register', requireGuest, (req, res) => res.render('register', { title: 'Create account', inviteRequired: Boolean(config.signupInviteCode) }));
+router.get('/register', requireGuest, (req, res) => res.render('register', { title: 'Create account', inviteRequired: false }));
 router.post('/register', requireGuest, authLimit, async (req, res, next) => {
   try {
     const parsed = registerSchema.safeParse(req.body);

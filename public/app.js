@@ -95,3 +95,24 @@ function creatorUniverse(canvas) {
 }
 
 $$('[data-creator-universe]').forEach(creatorUniverse);
+
+// Interactive 3D Card Tilt Effect
+document.addEventListener('mousemove', e => {
+  const cards = document.querySelectorAll('.floating-card, .pipeline-card, .feature-card');
+  const mouseX = e.clientX;
+  const mouseY = e.clientY;
+
+  cards.forEach(card => {
+    const rect = card.getBoundingClientRect();
+    const cardX = rect.left + rect.width / 2;
+    const cardY = rect.top + rect.height / 2;
+    const angleX = (cardY - mouseY) / 25;
+    const angleY = (mouseX - cardX) / 25;
+
+    if (Math.abs(mouseX - cardX) < 400 && Math.abs(mouseY - cardY) < 400) {
+      card.style.transform = 'perspective(1000px) rotateX(' + angleX + 'deg) rotateY(' + angleY + 'deg) scale3d(1.02, 1.02, 1.02)';
+    } else {
+      card.style.transform = '';
+    }
+  });
+});

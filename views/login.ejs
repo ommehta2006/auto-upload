@@ -1,11 +1,9 @@
 <%- include('partials/head') %>
-<main class="auth-shell">
-  <section class="cinema-auth">
-    <canvas data-creator-universe aria-hidden="true"></canvas><div class="scan-beam"></div><div class="cinema-grid"></div>
-    <div class="auth-brand"><span class="brand-mark large"><span></span></span><strong>YouTubePilot</strong></div>
-    <div class="auth-hero"><p class="eyebrow">The autonomous creator studio</p><h1>Publish beyond<br><span>the screen.</span></h1><p>Your laptop sleeps. Your channel does not. Encrypted backend browsers launch Videos and Shorts on your schedule.</p><div class="auth-metrics"><span><b>24/7</b> backend worker</span><span><b>AES-256</b> session vault</span><span><b>2</b> creator formats</span></div></div>
-    <div class="vfx-stage auth-vfx" aria-hidden="true"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="play-core"><span></span></div><div class="floating-card card-a"><b>SHORT</b><i></i><small>READY</small></div><div class="floating-card card-b"><b>VIDEO</b><i></i><small>SCHEDULED</small></div><div class="timeline-vfx"><span></span><em></em></div></div>
-  </section>
-  <section class="auth-panel"><div class="auth-card"><p class="eyebrow dark">Secure customer access</p><h2>Enter your studio</h2><p class="muted">Continue to the private publishing command center.</p><%- include('partials/flash') %><form class="stack-form" method="post" action="/login"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><span>Email address</span><input type="email" name="email" autocomplete="email" required placeholder="creator@example.com"></label><label><span>Password</span><input type="password" name="password" autocomplete="current-password" required placeholder="••••••••••••"></label><button class="btn btn-primary btn-xl" type="submit">Enter command center <i>→</i></button></form><p class="auth-switch">New customer? <a href="/register">Create an account</a></p><div class="security-line"><span>◆</span> Passwords are hashed. YouTube credentials are never collected.</div></div></section>
-</main>
-<%- include('partials/footer') %>
+<main class=auth-shell>
+  <section class=cinema-auth>
+    <canvas data-creator-universe aria-hidden=true></canvas>
+    <div class=scan-beam></div>
+    <div class=cinema-grid></div>
+    <div class=auth-brand>
+      <a href=/ class=brand-link>
+        <span class=brand-mark

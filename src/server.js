@@ -118,7 +118,7 @@ app.use((req, res, next) => {
 });
 app.use(verifyCsrf);
 
-app.get('/', (req, res) => res.redirect(req.session?.userId ? '/app' : '/login'));
+app.get('/', (req, res) => res.render('home', { title: 'YouTubePilot · Autonomous Creator Studio & YouTube Automation' }));
 app.get('/health', async (_req, res) => {
   try {
     await query('SELECT 1');
