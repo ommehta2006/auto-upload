@@ -1,0 +1,8 @@
+*.sh text eol=lf
+*.command text eol=lf
+Dockerfile* text eol=lf
+*.toml text eol=lf
+*.caddyfile text eol=lf
+Caddyfile text eol=lf
+Railway.Caddyfile text eol=lf
+Local.Caddyfile text eol=lf

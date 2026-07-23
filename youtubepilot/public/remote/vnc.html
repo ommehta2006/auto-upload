@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Secure YouTube Browser</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #111827;
+      color: #f9fafb;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    #status {
+      position: fixed;
+      z-index: 2;
+      top: 12px;
+      left: 12px;
+      max-width: calc(100% - 24px);
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(17, 24, 39, 0.84);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    #screen {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+    }
+    #screen canvas {
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Connecting to secure browser...</div>
+  <div id="screen"></div>
+  <script type="module">
+    import RFB from './core/rfb.js';
+
+    const status = document.getElementById('status');
+    const screen = document.getElementById('screen');
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const path = (params.get('path') || 'remote/websockify').replace(/^\/+/, '');
+    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${scheme}//${window.location.host}/${path}?token=${encodeURIComponent(token)}`;
+
+    let rfb;
+    let reconnectTimer;
+
+    function setStatus(message) {
+      status.textContent = message;
+    }
+
+    function connect() {
+      clearTimeout(reconnectTimer);
+      setStatus('Connecting to secure browser...');
+      rfb = new RFB(screen, url);
+      rfb.viewOnly = false;
+      rfb.focusOnClick = true;
+      rfb.scaleViewport = params.get('resize') !== 'remote';
+      rfb.resizeSession = false;
+      rfb.addEventListener('connect', () => setStatus('Connected. Use this window to finish Google sign-in.'));
+      rfb.addEventListener('disconnect', event => {
+        setStatus(event.detail.clean ? 'Secure browser closed.' : 'Connection lost. Reconnecting...');
+        if (!event.detail.clean && params.get('reconnect') === 'true') {
+          reconnectTimer = setTimeout(connect, 1800);
+        }
+      });
+      rfb.addEventListener('credentialsrequired', () => {
+        setStatus('The secure browser rejected the connection.');
+      });
+      rfb.addEventListener('securityfailure', () => {
+        setStatus('The secure browser connection failed.');
+      });
+    }
+
+    if (!token) {
+      setStatus('Missing secure browser token. Open a fresh Connect YouTube link from the dashboard.');
+    } else {
+      connect();
+    }
+  </script>
+</body>
+</html>

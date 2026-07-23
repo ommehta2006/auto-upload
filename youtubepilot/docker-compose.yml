@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-youtubepilot}
+      POSTGRES_USER: ${POSTGRES_USER:-youtubepilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-youtubepilot} -d ${POSTGRES_DB:-youtubepilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks: [internal]
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-youtubepilot}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-youtubepilot}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY}
+      SIGNUP_INVITE_CODE: ${SIGNUP_INVITE_CODE}
+      BASE_URL: https://${APP_DOMAIN}
+      NOVNC_PUBLIC_URL: https://${APP_DOMAIN}/remote/vnc.html
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+      WORKER_INTERVAL_SECONDS: ${WORKER_INTERVAL_SECONDS:-20}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      MAX_VIDEO_MB: ${MAX_VIDEO_MB:-1000}
+      MAX_IMAGE_MB: ${MAX_IMAGE_MB:-10}
+      MAX_CAPTION_MB: ${MAX_CAPTION_MB:-5}
+      MAX_EXCEL_MB: ${MAX_EXCEL_MB:-10}
+      MAX_STORAGE_MB_PER_USER: ${MAX_STORAGE_MB_PER_USER:-4096}
+      LOGIN_SESSION_MINUTES: ${LOGIN_SESSION_MINUTES:-20}
+      BROWSER_HEADLESS: "true"
+      DISPLAY: :99
+    shm_size: 1gb
+    volumes: [app_storage:/app/storage,app_tmp:/app/tmp]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    expose: ["3000","6080"]
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.11.3-alpine
+    restart: unless-stopped
+    depends_on:
+      app: { condition: service_healthy }
+    environment: { APP_DOMAIN: ${APP_DOMAIN} }
+    ports: ["80:80","443:443","443:443/udp"]
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro,caddy_data:/data,caddy_config:/config]
+    networks: [internal]
+
+networks: { internal: {} }
+volumes: { postgres_data: {}, app_storage: {}, app_tmp: {}, caddy_data: {}, caddy_config: {} }

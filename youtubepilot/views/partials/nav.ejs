@@ -1,0 +1,10 @@
+<header class="topbar">
+  <a class="brand" href="/app" aria-label="YouTubePilot dashboard">
+    <span class="brand-mark"><span></span></span>
+    <span><strong>YouTubePilot</strong><small>Creator automation OS</small></span>
+  </a>
+  <div class="topbar-actions">
+    <div class="user-chip"><span class="avatar"><%= currentUser.displayName.slice(0,1).toUpperCase() %></span><span class="user-copy"><strong><%= currentUser.displayName %></strong><small><%= currentUser.email %></small></span></div>
+    <form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn-ghost btn-sm" type="submit">Sign out</button></form>
+  </div>
+</header>

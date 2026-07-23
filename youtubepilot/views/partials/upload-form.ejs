@@ -1,0 +1,96 @@
+<%
+  const f = typeof item !== 'undefined' && item ? item : {};
+  const isEdit = typeof editMode !== 'undefined' && editMode;
+  const selectedType = f.content_type || 'VIDEO';
+  const videos = media.filter(x => x.kind === 'VIDEO');
+  const thumbnails = media.filter(x => x.kind === 'THUMBNAIL');
+  const captions = media.filter(x => x.kind === 'CAPTION');
+  const check = (value, fallback=false) => (value === undefined || value === null ? fallback : Boolean(value)) ? 'checked' : '';
+  const select = (value, expected) => String(value || '') === String(expected) ? 'selected' : '';
+%>
+<form class="composer-form" method="post" action="<%= isEdit ? `/app/uploads/${f.id}/edit` : '/app/uploads' %>">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <section class="composer-head">
+    <div>
+      <p class="eyebrow">New publishing mission</p>
+      <h2><%= isEdit ? 'Edit upload' : 'Build your next release' %></h2>
+      <p class="muted">Every field is stored per upload. Channel-specific controls that YouTube does not expose are logged as warnings without freezing the worker.</p>
+    </div>
+    <div class="format-switch" data-format-switch>
+      <span class="format-glider"></span>
+      <label><input type="radio" name="contentType" value="VIDEO" <%= selectedType === 'VIDEO' ? 'checked' : '' %>><span>▰ Video</span></label>
+      <label><input type="radio" name="contentType" value="SHORT" <%= selectedType === 'SHORT' ? 'checked' : '' %>><span>▯ Short</span></label>
+    </div>
+  </section>
+
+  <div class="form-grid form-grid-3">
+    <label><span>Upload ID</span><input name="uploadId" required maxlength="100" pattern="[A-Za-z0-9._-]+" value="<%= f.upload_id || '' %>" placeholder="YT-2026-001"></label>
+    <label><span>Source video</span><select name="mediaId" required><option value="">Choose uploaded video</option><% videos.forEach(file => { %><option value="<%= file.id %>" <%= select(f.media_id,file.id) %>><%= file.original_name %></option><% }) %></select></label>
+    <label><span>Playlist</span><input name="playlistName" maxlength="150" value="<%= f.playlist_name || '' %>" placeholder="Optional exact playlist name"></label>
+    <label class="span-2"><span>Title</span><input name="title" required maxlength="100" value="<%= f.title || '' %>" placeholder="A strong, clear title"><small><b data-title-count>0</b>/100</small></label>
+    <label><span>Custom thumbnail</span><select name="thumbnailId"><option value="">YouTube automatic thumbnail</option><% thumbnails.forEach(file => { %><option value="<%= file.id %>" <%= select(f.thumbnail_id,file.id) %>><%= file.original_name %></option><% }) %></select></label>
+    <label class="span-2"><span>Description</span><textarea name="description" maxlength="5000" rows="6" placeholder="Description, links, chapters, credits…"><%= f.description || '' %></textarea></label>
+    <label><span>Subtitle file</span><select name="captionFileId"><option value="">No subtitle file</option><% captions.forEach(file => { %><option value="<%= file.id %>" <%= select(f.caption_file_id,file.id) %>><%= file.original_name %></option><% }) %></select></label>
+    <label class="span-2"><span>Tags</span><input name="tags" maxlength="500" value="<%= f.tags || '' %>" placeholder="automation, creator, tutorial"></label>
+    <label><span>Caption language</span><input name="captionLanguage" maxlength="80" value="<%= f.caption_language || '' %>" placeholder="English"></label>
+  </div>
+
+  <div class="section-ribbon"><span>01</span><strong>Timing & visibility</strong></div>
+  <div class="form-grid form-grid-4">
+    <label><span>Automation date</span><input type="date" name="automationDate" required value="<%= typeof automationDate !== 'undefined' ? automationDate : '' %>"></label>
+    <label><span>Automation time</span><input type="time" name="automationTime" required value="<%= typeof automationTime !== 'undefined' ? automationTime : '' %>"></label>
+    <label><span>Visibility</span><select name="visibility" data-visibility><option value="PRIVATE" <%= select(f.visibility || settings.default_visibility,'PRIVATE') %>>Private</option><option value="UNLISTED" <%= select(f.visibility,'UNLISTED') %>>Unlisted</option><option value="PUBLIC" <%= select(f.visibility,'PUBLIC') %>>Public</option><option value="SCHEDULE" <%= select(f.visibility,'SCHEDULE') %>>Schedule on YouTube</option></select></label>
+    <label class="toggle-field"><input type="checkbox" name="enabled" <%= check(f.enabled,true) %>><span><i></i>Queue enabled</span></label>
+    <label data-schedule-field><span>YouTube publish date</span><input type="date" name="youtubePublishDate" value="<%= typeof publishDate !== 'undefined' ? publishDate : '' %>"></label>
+    <label data-schedule-field><span>YouTube publish time</span><input type="time" name="youtubePublishTime" value="<%= typeof publishTime !== 'undefined' ? publishTime : '' %>"></label>
+    <label class="toggle-field" data-video-only><input type="checkbox" name="premiere" <%= check(f.premiere,false) %>><span><i></i>Set as Premiere</span></label>
+  </div>
+
+  <details class="settings-group" open>
+    <summary><span><b>02</b> Audience, disclosure & safety</span><em>Required policy controls</em></summary>
+    <div class="form-grid form-grid-3 details-body">
+      <label><span>Audience</span><select name="audience"><option value="NOT_MADE_FOR_KIDS" <%= select(f.audience || settings.default_audience,'NOT_MADE_FOR_KIDS') %>>Not made for kids</option><option value="MADE_FOR_KIDS" <%= select(f.audience,'MADE_FOR_KIDS') %>>Made for kids</option></select></label>
+      <label class="toggle-field"><input type="checkbox" name="ageRestriction" <%= check(f.age_restriction,false) %>><span><i></i>Restrict to 18+</span></label>
+      <label class="toggle-field"><input type="checkbox" name="paidPromotion" <%= check(f.paid_promotion,false) %>><span><i></i>Contains paid promotion</span></label>
+      <label class="toggle-field"><input type="checkbox" name="alteredContent" <%= check(f.altered_content,false) %>><span><i></i>Realistic altered/synthetic content</span></label>
+    </div>
+  </details>
+
+  <details class="settings-group">
+    <summary><span><b>03</b> Discovery & metadata</span><em>Language, category and recording details</em></summary>
+    <div class="form-grid form-grid-3 details-body">
+      <label><span>Video language</span><input name="language" maxlength="80" value="<%= f.language || settings.default_language || '' %>" placeholder="English"></label>
+      <label><span>Caption certification</span><select name="captionCertification"><option value="NONE" <%= select(f.caption_certification || 'NONE','NONE') %>>None</option><option value="NEVER_AIRED" <%= select(f.caption_certification,'NEVER_AIRED') %>>Never aired on television</option><option value="CAPTIONED" <%= select(f.caption_certification,'CAPTIONED') %>>Captioned broadcast</option><option value="EXEMPT" <%= select(f.caption_certification,'EXEMPT') %>>Exempt</option></select></label>
+      <label><span>Caption track name</span><input name="captionName" maxlength="100" value="<%= f.caption_name || '' %>" placeholder="English captions"></label>
+      <label><span>Category</span><select name="category"><option value="1" <%= select(f.category,'1') %>>Film & Animation</option><option value="2" <%= select(f.category,'2') %>>Autos & Vehicles</option><option value="10" <%= select(f.category,'10') %>>Music</option><option value="15" <%= select(f.category,'15') %>>Pets & Animals</option><option value="17" <%= select(f.category,'17') %>>Sports</option><option value="19" <%= select(f.category,'19') %>>Travel & Events</option><option value="20" <%= select(f.category,'20') %>>Gaming</option><option value="22" <%= select(f.category || settings.default_category,'22') %>>People & Blogs</option><option value="23" <%= select(f.category,'23') %>>Comedy</option><option value="24" <%= select(f.category,'24') %>>Entertainment</option><option value="25" <%= select(f.category,'25') %>>News & Politics</option><option value="26" <%= select(f.category,'26') %>>Howto & Style</option><option value="27" <%= select(f.category,'27') %>>Education</option><option value="28" <%= select(f.category,'28') %>>Science & Technology</option><option value="29" <%= select(f.category,'29') %>>Nonprofits & Activism</option></select></label>
+      <label><span>Recording date</span><input type="date" name="recordingDate" value="<%= f.recording_date ? String(f.recording_date).slice(0,10) : '' %>"></label>
+      <label><span>Recording location</span><input name="recordingLocation" maxlength="200" value="<%= f.recording_location || '' %>" placeholder="Optional location"></label>
+      <label class="toggle-field"><input type="checkbox" name="automaticChapters" <%= check(f.automatic_chapters,true) %>><span><i></i>Automatic chapters</span></label>
+      <label class="toggle-field"><input type="checkbox" name="featuredPlaces" <%= check(f.featured_places,true) %>><span><i></i>Featured places</span></label>
+      <label class="toggle-field"><input type="checkbox" name="automaticConcepts" <%= check(f.automatic_concepts,true) %>><span><i></i>Automatic concepts</span></label>
+    </div>
+  </details>
+
+  <details class="settings-group">
+    <summary><span><b>04</b> Distribution & rights</span><em>License, reach and subscriber delivery</em></summary>
+    <div class="form-grid form-grid-3 details-body">
+      <label><span>License</span><select name="license"><option value="STANDARD" <%= select(f.license || 'STANDARD','STANDARD') %>>Standard YouTube License</option><option value="CREATIVE_COMMONS" <%= select(f.license,'CREATIVE_COMMONS') %>>Creative Commons Attribution</option></select></label>
+      <label><span>Distribution</span><select name="distribution"><option value="EVERYWHERE" <%= select(f.distribution || 'EVERYWHERE','EVERYWHERE') %>>Everywhere</option><option value="MONETIZED_PLATFORMS" <%= select(f.distribution,'MONETIZED_PLATFORMS') %>>Monetized platforms only</option></select></label>
+      <label class="toggle-field"><input type="checkbox" name="allowEmbedding" <%= check(f.allow_embedding,true) %>><span><i></i>Allow embedding</span></label>
+      <label class="toggle-field"><input type="checkbox" name="notifySubscribers" <%= check(f.notify_subscribers,true) %>><span><i></i>Notify subscribers</span></label>
+    </div>
+  </details>
+
+  <details class="settings-group">
+    <summary><span><b>05</b> Community & Shorts</span><em>Comments, likes and remix permissions</em></summary>
+    <div class="form-grid form-grid-3 details-body">
+      <label><span>Comments</span><select name="commentsMode"><option value="ALLOW_ALL" <%= select(f.comments_mode || 'ALLOW_ALL','ALLOW_ALL') %>>Allow all comments</option><option value="HOLD_POTENTIALLY_INAPPROPRIATE" <%= select(f.comments_mode,'HOLD_POTENTIALLY_INAPPROPRIATE') %>>Hold potentially inappropriate</option><option value="INCREASE_STRICTNESS" <%= select(f.comments_mode,'INCREASE_STRICTNESS') %>>Increase strictness</option><option value="HOLD_ALL" <%= select(f.comments_mode,'HOLD_ALL') %>>Hold all comments</option><option value="DISABLE" <%= select(f.comments_mode,'DISABLE') %>>Disable comments</option></select></label>
+      <label><span>Comment sorting</span><select name="commentsSort"><option value="TOP" <%= select(f.comments_sort || 'TOP','TOP') %>>Top</option><option value="NEWEST" <%= select(f.comments_sort,'NEWEST') %>>Newest</option></select></label>
+      <label class="toggle-field"><input type="checkbox" name="showLikeCount" <%= check(f.show_like_count,true) %>><span><i></i>Show like count</span></label>
+      <label data-short-only><span>Shorts remixing</span><select name="remixMode"><option value="VIDEO_AND_AUDIO" <%= select(f.remix_mode || 'VIDEO_AND_AUDIO','VIDEO_AND_AUDIO') %>>Allow video and audio remixing</option><option value="AUDIO_ONLY" <%= select(f.remix_mode,'AUDIO_ONLY') %>>Audio remixing only</option><option value="NONE" <%= select(f.remix_mode,'NONE') %>>Do not allow remixing</option></select></label>
+      <label class="span-2" data-short-only><span>Related video</span><input name="relatedVideo" maxlength="300" value="<%= f.related_video || '' %>" placeholder="YouTube URL or title; availability depends on channel eligibility"></label>
+    </div>
+  </details>
+
+  <div class="composer-actions"><a class="btn btn-ghost" href="/app#queue">Cancel</a><button class="btn btn-primary btn-lg" type="submit"><span><%= isEdit ? 'Save changes' : 'Launch to queue' %></span><i>→</i></button></div>
+</form>

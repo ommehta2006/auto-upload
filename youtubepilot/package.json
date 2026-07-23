@@ -1,0 +1,40 @@
+{
+  "name": "youtubepilot-hosted-automation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hosted multi-user YouTube Video and Shorts scheduler with encrypted Playwright sessions, Excel import, private media storage, and a background worker.",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:migrate": "node src/migrate.js",
+    "check": "node scripts/check-project.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "render:smoke": "node scripts/render-smoke.mjs",
+    "secrets": "node deploy/generate-railway-secrets.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@novnc/novnc": "^1.7.0",
+    "bcryptjs": "^3.0.2",
+    "connect-pg-simple": "^10.0.0",
+    "dotenv": "^17.2.2",
+    "ejs": "^3.1.10",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "express-session": "^1.18.2",
+    "file-type": "^21.0.0",
+    "helmet": "^8.1.0",
+    "luxon": "^3.7.2",
+    "multer": "^2.0.2",
+    "pg": "^8.16.3",
+    "playwright": "1.61.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "ws": "^8.21.1",
+    "xlsx-populate": "^1.21.0",
+    "zod": "^4.1.5"
+  }
+}

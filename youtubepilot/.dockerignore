@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log*
+.env
+.git
+.gitignore
+storage/**
+!storage/.gitkeep
+tmp/**
+!tmp/.gitkeep
+*.zip
+runtime
+.DS_Store
